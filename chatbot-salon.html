@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>🎉 Asistente Salón</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --green:      #25d366;
+      --green-dark: #128c7e;
+      --bg:         #e5ddd5;
+      --user-bg:    #dcf8c6;
+      --bot-bg:     #ffffff;
+      --header-bg:  #075e54;
+      --radius:     18px;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
+      background: var(--bg);
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ───────────────────────────────────────────── */
+    #header {
+      background: var(--header-bg);
+      color: #fff;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 2px 5px rgba(0,0,0,.25);
+      flex-shrink: 0;
+    }
+    .avatar {
+      width: 40px; height: 40px; border-radius: 50%;
+      background: var(--green); display: flex; align-items: center;
+      justify-content: center; font-size: 1.3rem; flex-shrink: 0;
+    }
+    .hinfo { flex: 1; }
+    .hname { font-size: .97rem; font-weight: 600; }
+    .hsub  { font-size: .68rem; opacity: .75; }
+    .reset-btn {
+      background: none; border: none; color: #fff;
+      opacity: .75; cursor: pointer; font-size: .78rem;
+      padding: 5px 9px; border-radius: 6px; transition: opacity .15s;
+    }
+    .reset-btn:hover { opacity: 1; background: rgba(255,255,255,.15); }
+
+    /* ── Messages ─────────────────────────────────────────── */
+    #messages {
+      flex: 1; overflow-y: auto; padding: 10px 8px 6px;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .msg-wrap { display: flex; flex-direction: column; margin-bottom: 2px; }
+    .msg-wrap.user { align-items: flex-end; }
+    .msg-wrap.bot  { align-items: flex-start; }
+
+    .bubble {
+      max-width: min(78vw, 360px);
+      padding: 8px 11px;
+      border-radius: var(--radius);
+      font-size: .875rem; line-height: 1.45;
+      word-break: break-word; white-space: pre-wrap;
+      box-shadow: 0 1px 2px rgba(0,0,0,.13);
+    }
+    .user .bubble { background: var(--user-bg); border-bottom-right-radius: 4px; }
+    .bot  .bubble { background: var(--bot-bg);  border-bottom-left-radius: 4px; }
+
+    .msg-time {
+      font-size: .62rem; color: #888;
+      padding: 2px 5px 0;
+    }
+
+    /* ── Quick replies ────────────────────────────────────── */
+    .qr-row {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      padding: 4px 2px 6px 2px;
+      max-width: min(90vw, 420px);
+    }
+    .qr-btn {
+      background: #fff; border: 1.5px solid var(--green);
+      color: var(--green-dark); border-radius: 20px;
+      padding: 5px 13px; font-size: .82rem; font-weight: 500;
+      cursor: pointer; transition: all .15s; white-space: nowrap;
+    }
+    .qr-btn:hover, .qr-btn:active { background: var(--green); color: #fff; }
+
+    /* ── Typing indicator ─────────────────────────────────── */
+    .typing-row { display: flex; align-items: flex-start; padding: 2px 0; }
+    .typing-bubble {
+      background: var(--bot-bg); border-radius: var(--radius); border-bottom-left-radius: 4px;
+      padding: 10px 14px; display: flex; gap: 4px; align-items: center;
+      box-shadow: 0 1px 2px rgba(0,0,0,.12);
+    }
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%; background: #aaa;
+      animation: bounce .85s infinite ease-in-out;
+    }
+    .dot:nth-child(2) { animation-delay: .17s; }
+    .dot:nth-child(3) { animation-delay: .34s; }
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30%           { transform: translateY(-5px); }
+    }
+
+    /* ── WhatsApp card ────────────────────────────────────── */
+    .wapp-card {
+      background: #f0fdf4; border: 1.5px solid #86efac;
+      border-radius: 10px; padding: 10px;
+      font-size: .78rem; font-family: 'Courier New', monospace;
+      white-space: pre-wrap; word-break: break-word;
+      max-height: 280px; overflow-y: auto; margin-top: 6px;
+    }
+    .copy-btn {
+      display: block; width: 100%; margin-top: 7px;
+      padding: 8px; background: var(--green); color: #fff;
+      border: none; border-radius: 8px; font-size: .85rem;
+      font-weight: 600; cursor: pointer; transition: background .15s;
+    }
+    .copy-btn:hover { background: var(--green-dark); }
+    .saved-pill {
+      display: inline-block; margin-top: 5px;
+      background: #dcfce7; color: #15803d;
+      border-radius: 20px; padding: 2px 10px; font-size: .73rem;
+    }
+
+    /* ── Input bar ────────────────────────────────────────── */
+    #input-bar {
+      background: #f0f0f0; padding: 7px 10px;
+      display: flex; gap: 7px; align-items: center;
+      border-top: 1px solid #d0d0d0; flex-shrink: 0;
+    }
+    #userInput {
+      flex: 1; border: none; border-radius: 22px;
+      padding: 9px 15px; font-size: .9rem; outline: none;
+      background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.1);
+      resize: none; height: 42px; line-height: 1.4;
+    }
+    .icon-btn {
+      width: 42px; height: 42px; border-radius: 50%; border: none;
+      cursor: pointer; display: flex; align-items: center;
+      justify-content: center; font-size: 1.05rem;
+      transition: all .15s; flex-shrink: 0;
+    }
+    #micBtn { background: #e0e0e0; color: #555; }
+    #micBtn.listening {
+      background: #fee2e2; color: #dc2626;
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50%       { transform: scale(1.1); }
+    }
+    #sendBtn { background: var(--green); color: #fff; }
+    #sendBtn:hover { background: var(--green-dark); }
+  </style>
+</head>
+<body>
+
+<div id="header">
+  <div class="avatar">🎉</div>
+  <div class="hinfo">
+    <div class="hname">Asistente Salón</div>
+    <div class="hsub">Presupuestos al instante</div>
+  </div>
+  <button class="reset-btn" onclick="resetChat()">↺ Nuevo</button>
+</div>
+
+<div id="messages"></div>
+
+<div id="input-bar">
+  <input type="text" id="userInput"
+    placeholder="Ej: 20 niños y 30 adultos para el sábado…"
+    autocomplete="off"
+    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}">
+  <button class="icon-btn" id="micBtn" onclick="toggleVoice()" title="Hablar">🎤</button>
+  <button class="icon-btn" id="sendBtn"  onclick="sendMessage()"  title="Enviar">➤</button>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  CONFIG — comparte localStorage con presupuesto-salon.html
+// ═══════════════════════════════════════════════════════════════
+const DEFAULTS = {
+  baseWeekday: 20000, baseWeekend: 22000, extraHour: 5000,
+  kidsIncluded: 20,   kidsBasic: 200,     kidsAlt: 300,
+  adultsIncluded: 10, menuPizza: 300,     menuPizzaCalzone: 350, menuFull: 400,
+  recIncluded: 2,     kidsPerRec: 10,     adultsPerWaiter: 20,
+  staffCost: 2000,    staffExtraHr: 250,  webhookUrl: ''
+};
+const cfg = () => {
+  try { const s = localStorage.getItem('salonCfg');
+        return s ? { ...DEFAULTS, ...JSON.parse(s) } : { ...DEFAULTS }; }
+  catch { return { ...DEFAULTS }; }
+};
+const fmtCur = n => '$\u202f' + Math.round(n).toLocaleString('es-UY');
+
+// ═══════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════
+let state = {};
+function resetState() {
+  state = {
+    kids: null, adults: null, date: null,
+    kidsMenu: null, adultsMenu: null,
+    extraHours: 0, clientName: null,
+    step: 'start',   // start | confirm | done
+    total: null, _calc: null
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DATE HELPERS
+// ═══════════════════════════════════════════════════════════════
+const MONTHS_ES = {
+  enero:1,febrero:2,marzo:3,abril:4,mayo:5,junio:6,
+  julio:7,agosto:8,septiembre:9,octubre:10,noviembre:11,diciembre:12
+};
+// keys sin acento (el texto se normaliza antes de buscar)
+const WEEKDAYS_ES = {
+  domingo:0,lunes:1,martes:2,miercoles:3,jueves:4,viernes:5,sabado:6
+};
+
+function norm(s) {
+  return String(s).toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function nextOccurrence(weekday) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const diff = (weekday - today.getDay() + 7) % 7 || 7;
+  const d = new Date(today); d.setDate(today.getDate() + diff);
+  return d;
+}
+
+function parseDateFromText(raw) {
+  const t = norm(raw);
+
+  // hoy / mañana
+  if (/\bhoy\b/.test(t)) { const d = new Date(); d.setHours(0,0,0,0); return d; }
+  if (/\bmanana\b/.test(t)) { const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()+1); return d; }
+
+  // "el sábado", "próximo viernes", "sábado que viene"
+  for (const [name, num] of Object.entries(WEEKDAYS_ES)) {
+    if (new RegExp('\\b' + name + '\\b').test(t)) return nextOccurrence(num);
+  }
+
+  // DD/MM o DD/MM/YYYY
+  const slashM = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+  if (slashM) {
+    const day = +slashM[1], mon = +slashM[2] - 1;
+    const yr  = slashM[3]
+      ? (slashM[3].length === 2 ? 2000 + +slashM[3] : +slashM[3])
+      : new Date().getFullYear();
+    const d = new Date(yr, mon, day);
+    if (!isNaN(d)) return d;
+  }
+
+  // "el 20 de marzo" / "20 de marzo" / "20 marzo" / "20 marzo 2026"
+  const monthPat = Object.keys(MONTHS_ES).join('|');
+  const textM = t.match(
+    new RegExp('\\b(\\d{1,2})\\s+(?:de\\s+)?(' + monthPat + ')(?:\\s+(?:de\\s+)?(\\d{4}))?')
+  );
+  if (textM) {
+    const day = +textM[1], mon = MONTHS_ES[textM[2]] - 1;
+    let yr = textM[3] ? +textM[3] : new Date().getFullYear();
+    let d = new Date(yr, mon, day); d.setHours(0,0,0,0);
+    if (d < new Date() && !textM[3]) d = new Date(yr + 1, mon, day);
+    if (!isNaN(d)) return d;
+  }
+
+  return null;
+}
+
+const DAY_NAMES  = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+const MON_NAMES  = ['enero','febrero','marzo','abril','mayo','junio',
+                    'julio','agosto','septiembre','octubre','noviembre','diciembre'];
+
+function fmtDate(d)    { return `${DAY_NAMES[d.getDay()]} ${d.getDate()} de ${MON_NAMES[d.getMonth()]}`; }
+function isWeekend(d)  { const w = d.getDay(); return w === 0 || w === 5 || w === 6; }
+function dateISO(d)    { return d.toISOString().split('T')[0]; }
+
+// ═══════════════════════════════════════════════════════════════
+//  EXTRACTOR  – saca datos de texto libre
+// ═══════════════════════════════════════════════════════════════
+function extractNumber(t, keywords) {
+  for (const kw of keywords) {
+    // "20 niños" o "niños: 20" o "niños(20)"
+    const m1 = t.match(new RegExp('(\\d+)\\s*' + kw + 's?\\b'));
+    if (m1) return +m1[1];
+    const m2 = t.match(new RegExp(kw + 's?\\b.{0,25}?(\\d+)'));
+    if (m2) return +m2[1];
+  }
+  return null;
+}
+
+function extractFromText(raw) {
+  const t = norm(raw);
+
+  // Niños
+  const k = extractNumber(t, ['nino','nene','chico','menor','pibito','bebe','infante','kid','pequeno','gurí','guri']);
+  if (k !== null) state.kids = k;
+
+  // Adultos
+  const a = extractNumber(t, ['adulto','grande','persona','mayor','invitado','pax']);
+  if (a !== null) state.adults = a;
+
+  // Horas extra ("6 horas" → 2 extra; "2 horas extra" → 2 extra)
+  const exM = t.match(/(\d+)\s*hora\s*extra/);
+  if (exM) { state.extraHours = +exM[1]; }
+  else {
+    const totalHrM = t.match(/(\d+)\s*hora/);
+    if (totalHrM && +totalHrM[1] > 4) state.extraHours = +totalHrM[1] - 4;
+  }
+
+  // Fecha
+  const d = parseDateFromText(raw);
+  if (d) state.date = d;
+
+  // Menø niños
+  if (/alternativ|menu alt|alt\b/.test(t))         state.kidsMenu = 'alt';
+  else if (/basic|comida\s+nino|menu\s+nino/.test(t)) state.kidsMenu = 'basic';
+
+  // Menø adultos
+  if (/chivito|completo|full\b|todo/.test(t))       state.adultsMenu = 'pizza_calzone_chivito';
+  else if (/calzon/.test(t))                         state.adultsMenu = 'pizza_calzone';
+  else if (/pizza|piza/.test(t))                     state.adultsMenu = 'pizza';
+  else if (/traen|sin men|no comen|propio/.test(t))  state.adultsMenu = 'none';
+
+  // Nombre del cliente
+  const nameM = raw.match(
+    /(?:para\s+(?:los?\s+|la\s+|las\s+)?|a\s+nombre\s+de\s+|apellido\s*[:=]?\s*|familia\s+)([A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,})?)/
+  );
+  if (nameM && !state.clientName) state.clientName = nameM[1];
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CÁLCULO  (misma lógica que presupuesto-salon.html)
+// ═══════════════════════════════════════════════════════════════
+function calculate() {
+  const C = cfg();
+  const km = state.kidsMenu  || 'basic';
+  const am = state.adultsMenu || 'pizza';
+
+  const basePrice = isWeekend(state.date) ? C.baseWeekend : C.baseWeekday;
+
+  const neededRecs    = Math.ceil(state.kids   / C.kidsPerRec);
+  const neededWaiters = Math.ceil(state.adults / C.adultsPerWaiter);
+  const totalStaff    = neededRecs + neededWaiters;
+
+  const salonExtraCst = state.extraHours * C.extraHour;
+  const extraHrTotCst = salonExtraCst + totalStaff * state.extraHours * C.staffExtraHr;
+
+  const kidsIncl    = Math.min(state.kids, C.kidsIncluded);
+  const kidsExtra   = Math.max(0, state.kids - C.kidsIncluded);
+  const kidsMenuPrc = km === 'basic' ? C.kidsBasic : C.kidsAlt;
+  const kidsExtraCst = kidsExtra * kidsMenuPrc;
+  const kidsUpgrade  = km === 'alt' ? kidsIncl * (C.kidsAlt - C.kidsBasic) : 0;
+
+  const adultPrices = { none:0, pizza:C.menuPizza, pizza_calzone:C.menuPizzaCalzone, pizza_calzone_chivito:C.menuFull };
+  const adultMenuPrc = adultPrices[am] || 0;
+  const adultMenuCst = state.adults * adultMenuPrc;
+
+  const recsCst    = Math.max(0, neededRecs - C.recIncluded) * C.staffCost;
+  const waitersCst = neededWaiters * C.staffCost;
+
+  const total = basePrice + extraHrTotCst + kidsExtraCst + kidsUpgrade + adultMenuCst + recsCst + waitersCst;
+  state.total = Math.round(total / 100) * 100;
+  state._calc = {
+    C, basePrice, km, am, kidsMenuPrc, adultMenuPrc,
+    kidsExtraCst, kidsUpgrade, adultMenuCst,
+    recsCst, waitersCst, extraHrTotCst, salonExtraCst,
+    kidsIncl, kidsExtra, neededRecs, neededWaiters
+  };
+  return state.total;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  WHATSAPP TEXT
+// ═══════════════════════════════════════════════════════════════
+const KIDS_MENU_NAMES  = { basic:'Menú básico', alt:'Menú alternativo' };
+const ADULT_MENU_NAMES = { none:'Traen su comida', pizza:'Solo pizzas',
+                           pizza_calzone:'Pizzas y calzones',
+                           pizza_calzone_chivito:'Pizzas, calzones y chivitos' };
+
+function buildWhatsApp() {
+  const b = state._calc;
+  const totalHrs = 4 + state.extraHours;
+  const dayLabel = isWeekend(state.date) ? 'Fin de semana' : 'Lunes–Jueves';
+  const menuK = KIDS_MENU_NAMES[state.kidsMenu   || 'basic'];
+  const menuA = ADULT_MENU_NAMES[state.adultsMenu || 'pizza'];
+
+  let t = `🎉 *PRESUPUESTO SALÓN DE FIESTAS*\n`;
+  t    += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  if (state.clientName) t += `👤 *Cliente:* ${state.clientName}\n`;
+  t    += `📅 *Fecha:* ${fmtDate(state.date)}\n`;
+  t    += `👶 *Niños:* ${state.kids}  |  🧑 *Adultos:* ${state.adults}\n`;
+  t    += `⏱ *Duración:* ${totalHrs} hs\n\n`;
+
+  t    += `📋 *DETALLE:*\n`;
+  t    += `🏠 Alquiler base (${dayLabel}): ${fmtCur(b.basePrice)}\n`;
+  if (b.kidsExtraCst > 0)  t += `👶 Niños extra (${b.kidsExtra} × ${fmtCur(b.kidsMenuPrc)}): ${fmtCur(b.kidsExtraCst)}\n`;
+  if (b.kidsUpgrade  > 0)  t += `🍽️ Upgrade menø niños: ${fmtCur(b.kidsUpgrade)}\n`;
+  if (b.adultMenuCst > 0)  t += `🍕 Menø adultos (${state.adults} × ${fmtCur(b.adultMenuPrc)}): ${fmtCur(b.adultMenuCst)}\n`;
+  if (b.recsCst      > 0)  t += `🎪 Recreadores extra: ${fmtCur(b.recsCst)}\n`;
+  if (b.waitersCst   > 0)  t += `🍽️ Mozos: ${fmtCur(b.waitersCst)}\n`;
+  if (b.extraHrTotCst> 0)  t += `⏱ Horas extra: ${fmtCur(b.extraHrTotCst)}\n`;
+  t    += `\n✅ *TOTAL: ${fmtCur(state.total)}*\n`;
+  t    += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  t    += `_Menú niños: ${menuK}_\n`;
+  t    += `_Menú adultos: ${menuA}_\n`;
+  t    += `🎡 Toro mecánico o agujas + castillo inflable ¡sin costo! 🆓\n`;
+  t    += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  t    += `_Precios en pesos uruguayos ($UY)_`;
+  return t;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GUARDAR EN SHEET
+// ═══════════════════════════════════════════════════════════════
+function saveToSheet() {
+  const url = cfg().webhookUrl;
+  if (!url || !url.startsWith('http')) return false;
+
+  const id      = 'bot-' + Date.now();
+  const dateStr = dateISO(state.date);
+  const dayType = isWeekend(state.date) ? 'weekend' : 'weekday';
+  const totalHrs = 4 + state.extraHours;
+
+  const payload = {
+    'ID':              id,
+    'Tipo':            'presupuesto',
+    'Nombre guardado': state.clientName || '',
+    'Fecha':           `${String(state.date.getDate()).padStart(2,'0')}/${String(state.date.getMonth()+1).padStart(2,'0')}/${state.date.getFullYear()}`,
+    'Nombre evento':   state.clientName || '',
+    'Hora inicio':     '',
+    'Hora fin':        '',
+    'Duración (hs)':   totalHrs,
+    'Tipo de día':     dayType === 'weekday' ? 'Lunes–Jueves' : 'Vie/Sáb/Dom/Fer',
+    'Nº niños':        state.kids,
+    'Menú niños':      state.kidsMenu === 'alt' ? 'Alternativo' : 'Básico',
+    'Nº adultos':      state.adults,
+    'Menú adultos':    ADULT_MENU_NAMES[state.adultsMenu || 'pizza'],
+    'Horas extra':     state.extraHours,
+    'Personal extra':  0,
+    'Total ($)':       state.total,
+    'Descuento valor': '',
+    'Descuento tipo':  '',
+    'Descripción':     '',
+    'Notas':           'Creado desde chatbot',
+    'Guardado el':     new Date().toISOString()
+  };
+
+  fetch(url, {
+    method:  'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body:    JSON.stringify(payload)
+  }).catch(() => {});
+
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MOTOR DE CONVERSACIÓN
+// ═══════════════════════════════════════════════════════════════
+function getNextMissing() {
+  if (state.kids   === null && state.adults === null && !state.date) return 'ask_all';
+  if (state.kids   === null && state.adults === null)                return 'ask_people';
+  if (state.kids   === null)  return 'ask_kids';
+  if (state.adults === null)  return 'ask_adults';
+  if (!state.date)            return 'ask_date';
+  if (!state.kidsMenu || !state.adultsMenu) return 'ask_menus';
+  return 'calculate';
+}
+
+function handleMissing() {
+  const next = getNextMissing();
+  switch (next) {
+
+    case 'ask_all':
+      botMsg('¿Para cuántos invitados y para qué fecha es el evento?');
+      break;
+
+    case 'ask_people':
+      botMsg('¿Cuántos niños y cuántos adultos van a ser?');
+      break;
+
+    case 'ask_kids':
+      botMsg('¿Cuántos niños van a ser?');
+      break;
+
+    case 'ask_adults':
+      botMsg('¿Y cuántos adultos?');
+      break;
+
+    case 'ask_date':
+      botMsg('¿Para qué fecha sería el evento?');
+      break;
+
+    case 'ask_menus': {
+      const dn       = isWeekend(state.date) ? 'fin de semana 🎉' : 'día de semana';
+      const totalHrs = 4 + state.extraHours;
+      botMsg(
+        `Perfecto, el *${fmtDate(state.date)}* es ${dn}. Asumo *${totalHrs} hs*.\n¿Con qué menú?`,
+        [
+          { label: '🍕 Básico + Pizzas',   val: 'menu basico para ninos y pizzas para adultos' },
+          { label: '🥙 Básico + Completo', val: 'menu basico para ninos y completo para adultos' },
+          { label: '⭐ Alt + Pizzas',       val: 'menu alternativo para ninos y pizzas para adultos' },
+          { label: '🚫 Adultos sin menú',  val: 'menu basico para ninos y traen comida adultos' },
+        ]
+      );
+      break;
+    }
+
+    case 'calculate': {
+      const total = calculate();
+      const menuK = KIDS_MENU_NAMES[state.kidsMenu];
+      const menuA = ADULT_MENU_NAMES[state.adultsMenu];
+      botMsg(
+        `Acá va el presupuesto para el *${fmtDate(state.date)}*:\n\n` +
+        `👶 ${state.kids} niños — ${menuK}\n` +
+        `🧑 ${state.adults} adultos — ${menuA}\n\n` +
+        `💰 *Total: ${fmtCur(total)}*\n\n` +
+        `¿Querés el detalle para WhatsApp?`,
+        [
+          { label: '📲 Sí, quiero',    val: '__wapp__' },
+          { label: '✏️ Cambiar algo',  val: '__edit__' },
+          { label: '🔄 Nuevo',         val: '__reset__' },
+        ]
+      );
+      state.step = 'confirm';
+      break;
+    }
+  }
+}
+
+function processMessage(raw) {
+  if (raw === '__reset__') { resetChat(); return; }
+
+  const t = norm(raw);
+
+  // ── Estado: confirmación ──────────────────────────────────
+  if (state.step === 'confirm') {
+    if (raw === '__wapp__' || /si|dale|quiero|wapp|whatsapp|detalle|copiar/.test(t)) {
+      const wapp    = buildWhatsApp();
+      const saved   = saveToSheet();
+      state.step    = 'done';
+      showWappCard(wapp, saved);
+      setTimeout(() => {
+        botMsg('¿Necesitás otro presupuesto?', [
+          { label: '🔄 Sí, nuevo',   val: '__reset__' },
+          { label: '✅ No, gracias', val: '__bye__' },
+        ]);
+      }, 700);
+      return;
+    }
+    if (raw === '__edit__' || /cambi|modific|edit|otro/.test(t)) {
+      extractFromText(raw);
+      state.step = 'start';
+      // qué cambió?
+      if (/fecha|dia|fech/.test(t))  { state.date = null; }
+      if (/nino|chico|nene/.test(t)  && !/adulto/.test(t)) { state.kids = null; }
+      if (/adulto|grande/.test(t)    && !/nino/.test(t))   { state.adults = null; }
+      if (/menu|meni/.test(t))       { state.kidsMenu = null; state.adultsMenu = null; }
+      handleMissing();
+      return;
+    }
+    if (/no|gracias/.test(t)) {
+      botMsg('¡Perfecto! Si necesitás algo más, avisame 😊');
+      state.step = 'done';
+      return;
+    }
+    // Si dijo algo más, re-extraer y recalcular
+    extractFromText(raw);
+    handleMissing();
+    return;
+  }
+
+  // ── Estado: done ──────────────────────────────────────────
+  if (state.step === 'done') {
+    if (raw === '__bye__' || /no|gracias|listo|ok/.test(t)) {
+      botMsg('¡Hasta pronto! 👋');
+      return;
+    }
+    resetState();
+    extractFromText(raw);
+    handleMissing();
+    return;
+  }
+
+  // ── Estado normal: extraer y manejar ─────────────────────
+  extractFromText(raw);
+  handleMissing();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  UI
+// ═══════════════════════════════════════════════════════════════
+let _activeQR = null;  // referencia al último bloque de quick replies
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function fmtBubble(s) {
+  return escHtml(s)
+    .replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
+}
+function nowTime() {
+  return new Date().toLocaleTimeString('es-UY', { hour:'2-digit', minute:'2-digit' });
+}
+function scrollDown() {
+  const m = document.getElementById('messages');
+  m.scrollTop = m.scrollHeight;
+}
+
+function addUserBubble(text) {
+  // Ocultar quick replies anteriores
+  if (_activeQR) { _activeQR.remove(); _activeQR = null; }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-wrap user';
+  wrap.innerHTML =
+    `<div class="bubble">${fmtBubble(text)}</div>` +
+    `<div class="msg-time">${nowTime()}</div>`;
+  document.getElementById('messages').appendChild(wrap);
+  scrollDown();
+}
+
+function botMsg(text, quickReplies = [], delay = null) {
+  const msgs = document.getElementById('messages');
+  const typingDelay = delay !== null ? delay : Math.min(300 + text.length * 12, 1400);
+
+  // Indicador "escribiendo…"
+  const typing = document.createElement('div');
+  typing.className = 'typing-row';
+  typing.innerHTML = '<div class="typing-bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+  msgs.appendChild(typing);
+  scrollDown();
+
+  setTimeout(() => {
+    msgs.removeChild(typing);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'msg-wrap bot';
+    wrap.innerHTML =
+      `<div class="bubble">${fmtBubble(text)}</div>` +
+      `<div class="msg-time">${nowTime()}</div>`;
+    msgs.appendChild(wrap);
+
+    if (quickReplies.length > 0) {
+      const qrDiv = document.createElement('div');
+      qrDiv.className = 'qr-row';
+      quickReplies.forEach(qr => {
+        const btn = document.createElement('button');
+        btn.className = 'qr-btn';
+        btn.textContent = qr.label;
+        btn.onclick = () => {
+          qrDiv.remove(); _activeQR = null;
+          addUserBubble(qr.label);
+          setTimeout(() => processMessage(qr.val), 80);
+        };
+        qrDiv.appendChild(btn);
+      });
+      msgs.appendChild(qrDiv);
+      _activeQR = qrDiv;
+    }
+    scrollDown();
+  }, typingDelay);
+}
+
+function showWappCard(text, savedToSheet) {
+  const msgs = document.getElementById('messages');
+  if (_activeQR) { _activeQR.remove(); _activeQR = null; }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-wrap bot';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.style.padding = '6px';
+
+  const label = document.createElement('div');
+  label.style.cssText = 'font-size:.73rem;color:#555;padding:4px 6px 2px;font-weight:600';
+  label.textContent = '📋 Listo para copiar:';
+
+  const card = document.createElement('div');
+  card.className = 'wapp-card';
+  card.id = 'wapp-text-' + Date.now();
+  card.textContent = text;
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'copy-btn';
+  copyBtn.textContent = '📋 Copiar para WhatsApp';
+  copyBtn.onclick = () => {
+    navigator.clipboard.writeText(card.textContent).then(() => {
+      copyBtn.textContent = '✅ ¡Copiado!';
+      setTimeout(() => copyBtn.textContent = '📋 Copiar para WhatsApp', 2200);
+    });
+  };
+
+  bubble.appendChild(label);
+  bubble.appendChild(card);
+  bubble.appendChild(copyBtn);
+
+  if (savedToSheet) {
+    const pill = document.createElement('div');
+    pill.className = 'saved-pill';
+    pill.textContent = '✅ Guardado en el sheet';
+    bubble.appendChild(pill);
+  }
+
+  wrap.appendChild(bubble);
+  wrap.innerHTML += `<div class="msg-time">${nowTime()}</div>`;
+  wrap.insertBefore(bubble, wrap.lastChild);  // re-insert before time
+  wrap.replaceChildren(bubble, wrap.lastChild);
+  msgs.appendChild(wrap);
+  scrollDown();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  VOZ
+// ═══════════════════════════════════════════════════════════════
+let recognition = null, isListening = false;
+
+function micReset() {
+  isListening = false;
+  document.getElementById('micBtn').classList.remove('listening');
+  document.getElementById('micBtn').textContent = '🎤';
+  document.getElementById('userInput').placeholder = 'Ej: 20 niños y 30 adultos para el sábado…';
+}
+
+function toggleVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (!SR) {
+    botMsg('Tu navegador no soporta reconocimiento de voz.\n\nEn el celular podés usar el 🎤 del teclado para dictar directamente en el campo de texto.', [], 200);
+    return;
+  }
+
+  // HTTPS requerido en mobile
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+    botMsg('El micrófono requiere HTTPS. Usá el 🎤 del teclado de tu celular para dictar en el campo de texto 👆', [], 200);
+    return;
+  }
+
+  if (isListening) { recognition.stop(); return; }
+
+  recognition = new SR();
+  // es-UY no siempre está disponible en mobile; caemos a es como fallback
+  recognition.lang = 'es';
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    isListening = true;
+    document.getElementById('micBtn').classList.add('listening');
+    document.getElementById('micBtn').textContent = '⏹';
+    document.getElementById('userInput').placeholder = '🎤 Escuchando… tocá ⏹ para parar';
+  };
+
+  recognition.onresult = e => {
+    micReset();
+    const t = e.results[0][0].transcript;
+    document.getElementById('userInput').value = t;
+    sendMessage();
+  };
+
+  recognition.onerror = e => {
+    micReset();
+    const msgs = {
+      'not-allowed':       'Permiso de micrófono denegado. Habilitalo en la configuración del navegador.',
+      'no-speech':         'No se detectó voz. Intentá de nuevo.',
+      'network':           'Error de red. Revisá tu conexión e intentá de nuevo.',
+      'service-not-allowed': 'Servicio de voz no disponible en este navegador/protocolo.',
+      'aborted':           null,   // cancelado por el usuario, no mostrar nada
+    };
+    const msg = msgs[e.error];
+    if (msg) botMsg(msg, [], 100);
+  };
+
+  recognition.onend = () => { micReset(); };
+
+  try {
+    recognition.start();
+  } catch(err) {
+    micReset();
+    botMsg('No se pudo iniciar el micrófono. Usá el 🎤 del teclado de tu celular para dictar.', [], 100);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ENVIAR / RESET
+// ═══════════════════════════════════════════════════════════════
+function sendMessage() {
+  const input = document.getElementById('userInput');
+  const text  = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  addUserBubble(text);
+  setTimeout(() => processMessage(text), 80);
+}
+
+function resetChat() {
+  resetState();
+  document.getElementById('messages').innerHTML = '';
+  _activeQR = null;
+  greeting();
+}
+
+function greeting() {
+  botMsg(
+    '¡Hola! 👋 Soy el asistente del Salón.\n\nContame para cuántas personas y para qué fecha necesitás el presupuesto, y te calculo el total al toque.',
+    [], 600
+  );
+}
+
+// ── Init ─────────────────────────────────────────────────────
+resetState();
+greeting();
+</script>
+</body>
+</html>
