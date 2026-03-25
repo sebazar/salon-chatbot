@@ -207,8 +207,11 @@ function resetState() {
   state = {
     kids: null, adults: null, date: null,
     kidsMenu: null, adultsMenu: null,
-    extraHours: 0, clientName: null,
-    step: 'start',   // start | confirm | done
+    extraHours: 0, extraStaff: 0, comments: '',
+    clientName: null,
+    extrasAsked: false,   // si ya preguntamos por extras
+    _waitingFor: null,    // 'hours' | 'staff' | 'comment' | null
+    step: 'start',        // start | confirm | editing | done
     total: null, _calc: null
   };
 }
@@ -317,15 +320,19 @@ function extractFromText(raw) {
     if (totalHrM && +totalHrM[1] > 4) state.extraHours = +totalHrM[1] - 4;
   }
 
+  // Personal extra ("2 personal extra", "1 persona adicional")
+  const staffExM = t.match(/(\d+)\s*(?:personal|personas?)\s*(?:extra|adicional)/);
+  if (staffExM) state.extraStaff = +staffExM[1];
+
   // Fecha
   const d = parseDateFromText(raw);
   if (d) state.date = d;
 
-  // Menø niños
+  // Menú niños
   if (/alternativ|menu alt|alt\b/.test(t))         state.kidsMenu = 'alt';
   else if (/basic|comida\s+nino|menu\s+nino/.test(t)) state.kidsMenu = 'basic';
 
-  // Menø adultos
+  // Menú adultos
   if (/chivito|completo|full\b|todo/.test(t))       state.adultsMenu = 'pizza_calzone_chivito';
   else if (/calzon/.test(t))                         state.adultsMenu = 'pizza_calzone';
   else if (/pizza|piza/.test(t))                     state.adultsMenu = 'pizza';
@@ -344,39 +351,64 @@ function extractFromText(raw) {
 function calculate() {
   const C = cfg();
   const km = state.kidsMenu  || 'basic';
-  const am = state.adultsMenu || 'pizza';
+  const am = state.adultsMenu || 'none';
 
   const basePrice = isWeekend(state.date) ? C.baseWeekend : C.baseWeekday;
 
-  const neededRecs    = Math.ceil(state.kids   / C.kidsPerRec);
-  const neededWaiters = Math.ceil(state.adults / C.adultsPerWaiter);
-  const totalStaff    = neededRecs + neededWaiters;
+  // Staff (igual lógica que presupuesto-salon.html)
+  const recsNeeded    = state.kids   > 0 ? Math.ceil(state.kids   / C.kidsPerRec)      : 0;
+  const waiters       = state.adults > 0 ? Math.ceil(state.adults / C.adultsPerWaiter) : 0;
+  const actualRecs    = state.kids   > 0 ? Math.max(recsNeeded, C.recIncluded)         : 0;
+  const totalStaff    = actualRecs + waiters + state.extraStaff;
 
   const salonExtraCst = state.extraHours * C.extraHour;
   const extraHrTotCst = salonExtraCst + totalStaff * state.extraHours * C.staffExtraHr;
 
-  const kidsIncl    = Math.min(state.kids, C.kidsIncluded);
-  const kidsExtra   = Math.max(0, state.kids - C.kidsIncluded);
-  const kidsMenuPrc = km === 'basic' ? C.kidsBasic : C.kidsAlt;
+  const kidsIncl     = Math.min(state.kids, C.kidsIncluded);
+  const kidsExtra    = Math.max(0, state.kids - C.kidsIncluded);
+  const kidsMenuPrc  = km === 'basic' ? C.kidsBasic : C.kidsAlt;
   const kidsExtraCst = kidsExtra * kidsMenuPrc;
   const kidsUpgrade  = km === 'alt' ? kidsIncl * (C.kidsAlt - C.kidsBasic) : 0;
 
-  const adultPrices = { none:0, pizza:C.menuPizza, pizza_calzone:C.menuPizzaCalzone, pizza_calzone_chivito:C.menuFull };
+  const adultPrices  = { none:0, pizza:C.menuPizza, pizza_calzone:C.menuPizzaCalzone, pizza_calzone_chivito:C.menuFull };
   const adultMenuPrc = adultPrices[am] || 0;
   const adultMenuCst = state.adults * adultMenuPrc;
 
-  const recsCst    = Math.max(0, neededRecs - C.recIncluded) * C.staffCost;
-  const waitersCst = neededWaiters * C.staffCost;
+  const recsExtra  = Math.max(0, recsNeeded - C.recIncluded);
+  const recsCst    = recsExtra * C.staffCost;
+  const waitersCst = waiters   * C.staffCost;
+  const xStaffCst  = state.extraStaff * C.staffCost;
 
-  const total = basePrice + extraHrTotCst + kidsExtraCst + kidsUpgrade + adultMenuCst + recsCst + waitersCst;
+  const total = basePrice + extraHrTotCst + kidsExtraCst + kidsUpgrade + adultMenuCst + recsCst + waitersCst + xStaffCst;
   state.total = Math.round(total / 100) * 100;
   state._calc = {
     C, basePrice, km, am, kidsMenuPrc, adultMenuPrc,
     kidsExtraCst, kidsUpgrade, adultMenuCst,
-    recsCst, waitersCst, extraHrTotCst, salonExtraCst,
-    kidsIncl, kidsExtra, neededRecs, neededWaiters
+    recsCst, waitersCst, xStaffCst, extraHrTotCst, salonExtraCst,
+    kidsIncl, kidsExtra, recsNeeded, recsExtra, waiters
   };
   return state.total;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RESUMEN SENCILLO (para confirmar antes de guardar)
+// ═══════════════════════════════════════════════════════════════
+function buildSummary() {
+  const menuK    = KIDS_MENU_NAMES[state.kidsMenu   || 'basic'];
+  const menuA    = ADULT_MENU_NAMES[state.adultsMenu || 'none'];
+  const totalHrs = 4 + state.extraHours;
+  const dayLabel = isWeekend(state.date) ? 'fin de semana 🎉' : 'día de semana';
+
+  let t = `📋 *Resumen del presupuesto*\n\n`;
+  if (state.clientName) t += `👤 ${state.clientName}\n`;
+  t += `📅 ${fmtDate(state.date)} — ${dayLabel}\n`;
+  t += `👶 ${state.kids} niños — ${menuK}\n`;
+  t += `🧑 ${state.adults} adultos — ${menuA}\n`;
+  t += `⏱ ${totalHrs} hs${state.extraHours > 0 ? ` (4 incluidas + ${state.extraHours} extra)` : ' (incluidas)'}\n`;
+  if (state.extraStaff > 0) t += `👤 ${state.extraStaff} personal adicional\n`;
+  if (state.comments)        t += `💬 ${state.comments}\n`;
+  t += `\n💰 *Total: ${fmtCur(state.total)}*`;
+  return t;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -404,15 +436,17 @@ function buildWhatsApp() {
   t    += `📋 *DETALLE:*\n`;
   t    += `🏠 Alquiler base (${dayLabel}): ${fmtCur(b.basePrice)}\n`;
   if (b.kidsExtraCst > 0)  t += `👶 Niños extra (${b.kidsExtra} × ${fmtCur(b.kidsMenuPrc)}): ${fmtCur(b.kidsExtraCst)}\n`;
-  if (b.kidsUpgrade  > 0)  t += `🍽️ Upgrade menø niños: ${fmtCur(b.kidsUpgrade)}\n`;
-  if (b.adultMenuCst > 0)  t += `🍕 Menø adultos (${state.adults} × ${fmtCur(b.adultMenuPrc)}): ${fmtCur(b.adultMenuCst)}\n`;
-  if (b.recsCst      > 0)  t += `🎪 Recreadores extra: ${fmtCur(b.recsCst)}\n`;
-  if (b.waitersCst   > 0)  t += `🍽️ Mozos: ${fmtCur(b.waitersCst)}\n`;
+  if (b.kidsUpgrade  > 0)  t += `🍽️ Upgrade menú niños: ${fmtCur(b.kidsUpgrade)}\n`;
+  if (b.adultMenuCst > 0)  t += `🍕 Menú adultos (${state.adults} × ${fmtCur(b.adultMenuPrc)}): ${fmtCur(b.adultMenuCst)}\n`;
+  if (b.recsCst      > 0)  t += `🎪 Recreadores extra (${b.recsExtra}): ${fmtCur(b.recsCst)}\n`;
+  if (b.waitersCst   > 0)  t += `🧑‍🍳 Mozos (${b.waiters}): ${fmtCur(b.waitersCst)}\n`;
+  if (b.xStaffCst    > 0)  t += `👤 Personal adicional (${state.extraStaff}): ${fmtCur(b.xStaffCst)}\n`;
   if (b.extraHrTotCst> 0)  t += `⏱ Horas extra: ${fmtCur(b.extraHrTotCst)}\n`;
   t    += `\n✅ *TOTAL: ${fmtCur(state.total)}*\n`;
   t    += `━━━━━━━━━━━━━━━━━━━━━\n`;
   t    += `_Menú niños: ${menuK}_\n`;
   t    += `_Menú adultos: ${menuA}_\n`;
+  if (state.comments) t += `_💬 ${state.comments}_\n`;
   t    += `🎡 Toro mecánico o agujas + castillo inflable ¡sin costo! 🆓\n`;
   t    += `━━━━━━━━━━━━━━━━━━━━━\n`;
   t    += `_Precios en pesos uruguayos ($UY)_`;
@@ -446,11 +480,11 @@ function saveToSheet() {
     'Nº adultos':      state.adults,
     'Menú adultos':    ADULT_MENU_NAMES[state.adultsMenu || 'pizza'],
     'Horas extra':     state.extraHours,
-    'Personal extra':  0,
+    'Personal extra':  state.extraStaff,
     'Total ($)':       state.total,
     'Descuento valor': '',
     'Descuento tipo':  '',
-    'Descripción':     '',
+    'Descripción':     state.comments || '',
     'Notas':           'Creado desde chatbot',
     'Guardado el':     new Date().toISOString()
   };
@@ -474,7 +508,17 @@ function getNextMissing() {
   if (state.adults === null)  return 'ask_adults';
   if (!state.date)            return 'ask_date';
   if (!state.kidsMenu || !state.adultsMenu) return 'ask_menus';
+  if (!state.extrasAsked)     return 'ask_extras';
   return 'calculate';
+}
+
+function showSummaryWithButtons() {
+  calculate();
+  botMsg(buildSummary(), [
+    { label: '💾 Guardar', val: '__save__' },
+    { label: '✏️ Modificar', val: '__edit__' },
+  ]);
+  state.step = 'confirm';
 }
 
 function handleMissing() {
@@ -482,7 +526,7 @@ function handleMissing() {
   switch (next) {
 
     case 'ask_all':
-      botMsg('¿Para cuántos invitados y para qué fecha es el evento?');
+      botMsg('¿Para cuántos niños y adultos, y para qué fecha es el evento?');
       break;
 
     case 'ask_people':
@@ -502,39 +546,36 @@ function handleMissing() {
       break;
 
     case 'ask_menus': {
-      const dn       = isWeekend(state.date) ? 'fin de semana 🎉' : 'día de semana';
-      const totalHrs = 4 + state.extraHours;
+      const dn = isWeekend(state.date) ? 'fin de semana 🎉' : 'día de semana';
       botMsg(
-        `Perfecto, el *${fmtDate(state.date)}* es ${dn}. Asumo *${totalHrs} hs*.\n¿Con qué menú?`,
+        `Perfecto, el *${fmtDate(state.date)}* es ${dn}.\n¿Con qué menú?`,
         [
-          { label: '🍕 Básico + Pizzas',   val: 'menu basico para ninos y pizzas para adultos' },
-          { label: '🥙 Básico + Completo', val: 'menu basico para ninos y completo para adultos' },
-          { label: '⭐ Alt + Pizzas',       val: 'menu alternativo para ninos y pizzas para adultos' },
-          { label: '🚫 Adultos sin menú',  val: 'menu basico para ninos y traen comida adultos' },
+          { label: '🍕 Básico + Pizzas',   val: 'menu basico ninos y pizzas adultos' },
+          { label: '🥙 Básico + Completo', val: 'menu basico ninos y completo adultos' },
+          { label: '⭐ Alt + Pizzas',       val: 'menu alternativo ninos y pizzas adultos' },
+          { label: '🚫 Adultos sin menú',  val: 'menu basico ninos traen comida adultos' },
         ]
       );
       break;
     }
 
-    case 'calculate': {
-      const total = calculate();
-      const menuK = KIDS_MENU_NAMES[state.kidsMenu];
-      const menuA = ADULT_MENU_NAMES[state.adultsMenu];
+    case 'ask_extras': {
+      state.extrasAsked = true;
       botMsg(
-        `Acá va el presupuesto para el *${fmtDate(state.date)}*:\n\n` +
-        `👶 ${state.kids} niños — ${menuK}\n` +
-        `🧑 ${state.adults} adultos — ${menuA}\n\n` +
-        `💰 *Total: ${fmtCur(total)}*\n\n` +
-        `¿Querés el detalle para WhatsApp?`,
+        '¿Necesitás agregar algo más al presupuesto?',
         [
-          { label: '📲 Sí, quiero',    val: '__wapp__' },
-          { label: '✏️ Cambiar algo',  val: '__edit__' },
-          { label: '🔄 Nuevo',         val: '__reset__' },
+          { label: '✅ No, está bien',     val: '__no_extras__' },
+          { label: '⏱ Horas extra',        val: '__want_hours__' },
+          { label: '👤 Personal adicional', val: '__want_staff__' },
+          { label: '💬 Comentario',         val: '__want_comment__' },
         ]
       );
-      state.step = 'confirm';
       break;
     }
+
+    case 'calculate':
+      showSummaryWithButtons();
+      break;
   }
 }
 
@@ -543,46 +584,108 @@ function processMessage(raw) {
 
   const t = norm(raw);
 
-  // ── Estado: confirmación ──────────────────────────────────
+  // ── Quick replies de extras ───────────────────────────────
+  if (raw === '__no_extras__') {
+    handleMissing(); // va a 'calculate' → muestra resumen
+    return;
+  }
+  if (raw === '__want_hours__') {
+    botMsg('¿Cuántas horas extra necesitás?');
+    state._waitingFor = 'hours';
+    return;
+  }
+  if (raw === '__want_staff__') {
+    botMsg('¿Cuántas personas de personal adicional?');
+    state._waitingFor = 'staff';
+    return;
+  }
+  if (raw === '__want_comment__') {
+    botMsg('Contame, ¿qué querés agregar como comentario?');
+    state._waitingFor = 'comment';
+    return;
+  }
+
+  // ── Esperando respuesta puntual ───────────────────────────
+  if (state._waitingFor === 'hours') {
+    const m = t.match(/\d+/);
+    if (m) state.extraHours = +m[0];
+    state._waitingFor = null;
+    handleMissing();
+    return;
+  }
+  if (state._waitingFor === 'staff') {
+    const m = t.match(/\d+/);
+    if (m) state.extraStaff = +m[0];
+    state._waitingFor = null;
+    handleMissing();
+    return;
+  }
+  if (state._waitingFor === 'comment') {
+    state.comments = raw;
+    state._waitingFor = null;
+    handleMissing();
+    return;
+  }
+
+  // ── Estado: confirm ───────────────────────────────────────
   if (state.step === 'confirm') {
-    if (raw === '__wapp__' || /si|dale|quiero|wapp|whatsapp|detalle|copiar/.test(t)) {
-      const wapp    = buildWhatsApp();
-      const saved   = saveToSheet();
-      state.step    = 'done';
-      showWappCard(wapp, saved);
+    if (raw === '__save__' || /^(guarda|confirma|dale|si|sí|listo|ok)/.test(t)) {
+      const saved = saveToSheet();
+      const wapp  = buildWhatsApp();
+      state.step  = 'done';
+      if (saved) botMsg('✅ ¡Guardado en Google Sheets!', [], 300);
+      setTimeout(() => showWappCard(wapp, saved), saved ? 900 : 300);
       setTimeout(() => {
         botMsg('¿Necesitás otro presupuesto?', [
           { label: '🔄 Sí, nuevo',   val: '__reset__' },
           { label: '✅ No, gracias', val: '__bye__' },
         ]);
-      }, 700);
+      }, saved ? 1500 : 900);
       return;
     }
-    if (raw === '__edit__' || /cambi|modific|edit|otro/.test(t)) {
-      extractFromText(raw);
-      state.step = 'start';
-      // qué cambió?
-      if (/fecha|dia|fech/.test(t))  { state.date = null; }
-      if (/nino|chico|nene/.test(t)  && !/adulto/.test(t)) { state.kids = null; }
-      if (/adulto|grande/.test(t)    && !/nino/.test(t))   { state.adults = null; }
-      if (/menu|meni/.test(t))       { state.kidsMenu = null; state.adultsMenu = null; }
-      handleMissing();
+    if (raw === '__edit__' || /cambi|modific|edit/.test(t)) {
+      state.step = 'editing';
+      botMsg('¿Qué querés cambiar?\n(fecha, niños, adultos, menú, horas, personal, comentario…)');
       return;
     }
-    if (/no|gracias/.test(t)) {
-      botMsg('¡Perfecto! Si necesitás algo más, avisame 😊');
-      state.step = 'done';
-      return;
-    }
-    // Si dijo algo más, re-extraer y recalcular
+    // Escribió algo libre en confirm → intentar extraer y recalcular
     extractFromText(raw);
+    calculate();
+    botMsg(buildSummary(), [
+      { label: '💾 Guardar', val: '__save__' },
+      { label: '✏️ Modificar', val: '__edit__' },
+    ]);
+    return;
+  }
+
+  // ── Estado: editing ───────────────────────────────────────
+  if (state.step === 'editing') {
+    // Borrar el campo que mencionó
+    if (/fecha|dia|fech/.test(t))                             state.date = null;
+    if (/nino|chico|menor/.test(t) && !/adulto/.test(t))     state.kids = null;
+    if (/adulto|mayor|grande/.test(t) && !/nino/.test(t))    state.adults = null;
+    if (/menu|comi/.test(t))        { state.kidsMenu = null; state.adultsMenu = null; }
+    if (/hora|duraci/.test(t))        state.extraHours = 0;
+    if (/personal|staff/.test(t))     state.extraStaff = 0;
+    if (/comentar|nota/.test(t))      state.comments = '';
+
+    // Intentar extraer de lo que dijeron
+    extractFromText(raw);
+    state.step = 'start';
+
+    // Si cambiaron algo de los mandatorios, volver a preguntar extras también
+    if (!state.date || state.kids === null || state.adults === null ||
+        !state.kidsMenu || !state.adultsMenu) {
+      state.extrasAsked = false;
+    }
+
     handleMissing();
     return;
   }
 
   // ── Estado: done ──────────────────────────────────────────
   if (state.step === 'done') {
-    if (raw === '__bye__' || /no|gracias|listo|ok/.test(t)) {
+    if (raw === '__bye__' || /^(no|gracias|listo|ok|chau)/.test(t)) {
       botMsg('¡Hasta pronto! 👋');
       return;
     }
@@ -592,7 +695,7 @@ function processMessage(raw) {
     return;
   }
 
-  // ── Estado normal: extraer y manejar ─────────────────────
+  // ── Estado normal (start): extraer y manejar ─────────────
   extractFromText(raw);
   handleMissing();
 }
