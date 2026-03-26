@@ -1,0 +1,22 @@
+{
+  "baseWeekday": 18500,
+  "baseWeekend": 20900,
+  "extraHour": 4900,
+  "kidsIncluded": 20,
+  "kidsBasic": 220,
+  "kidsAlt": 350,
+  "kidsUpgradeFlat": 2600,
+  "adultsSmallThreshold": 20,
+  "adultsFreeMenuThreshold": 10,
+  "menuPizzaSmall": 450,
+  "menuPizza": 350,
+  "menuPizzaCalzone": 450,
+  "menuFull": 500,
+  "recIncluded": 2,
+  "kidsPerRec": 10,
+  "adultsPerWaiter": 20,
+  "staffCost": 1900,
+  "staffExtraHr": 450,
+  "webhookUrl": "https://script.google.com/macros/s/AKfycbxwn2hPDk6ZiBN5qrJ7rNjHIWi3UkmZkcvJDLtbQwjAWyIpbPLuoqWGrnu2xz0_wDjQhQ/exec",
+  "adminPassword": "salon2024"
+}
