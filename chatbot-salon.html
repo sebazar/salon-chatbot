@@ -194,9 +194,14 @@ const DEFAULTS = {
   webhookUrl: 'https://script.google.com/macros/s/AKfycbxwn2hPDk6ZiBN5qrJ7rNjHIWi3UkmZkcvJDLtbQwjAWyIpbPLuoqWGrnu2xz0_wDjQhQ/exec'
 };
 const cfg = () => {
-  try { const s = localStorage.getItem('salonCfg');
-        return s ? { ...DEFAULTS, ...JSON.parse(s) } : { ...DEFAULTS }; }
-  catch { return { ...DEFAULTS }; }
+  try {
+    const s = localStorage.getItem('salonCfg');
+    if (!s) return { ...DEFAULTS };
+    const stored = JSON.parse(s);
+    // Si el webhookUrl guardado está vacío, usar el de DEFAULTS
+    if (!stored.webhookUrl) delete stored.webhookUrl;
+    return { ...DEFAULTS, ...stored };
+  } catch { return { ...DEFAULTS }; }
 };
 const fmtCur = n => '$\u202f' + Math.round(n).toLocaleString('es-UY');
 
@@ -210,10 +215,14 @@ function resetState() {
     kidsMenu: null, adultsMenu: null,
     extraHours: 0, extraStaff: 0, comments: '',
     clientName: null,
-    extrasAsked: false,   // si ya preguntamos por extras
-    _waitingFor: null,    // 'hours' | 'staff' | 'comment' | null
-    step: 'start',        // start | confirm | editing | done
-    total: null, _calc: null
+    extrasAsked: false,
+    _waitingFor: null,
+    step: 'start',   // start | confirm | editing | done
+                     // reserva: reserva_select | reserva_collecting | reserva_confirm | reserva_editing
+    total: null, _calc: null,
+    // Reserva
+    eventName: null, startTime: null,
+    _selectedPresId: null, _presCache: []
   };
 }
 
@@ -500,6 +509,204 @@ function saveToSheet() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  GUARDAR RESERVA (sheet + localStorage)
+// ═══════════════════════════════════════════════════════════════
+function calcEndTime(startTime, totalHrs) {
+  const [h, m] = startTime.split(':').map(Number);
+  const mins   = h * 60 + m + totalHrs * 60;
+  return `${String(Math.floor(mins / 60) % 24).padStart(2,'0')}:${String(mins % 60).padStart(2,'0')}`;
+}
+
+function parseTime(raw) {
+  const t = norm(raw);
+  const m1 = raw.match(/(\d{1,2}):(\d{2})/);
+  if (m1) return `${m1[1].padStart(2,'0')}:${m1[2]}`;
+  const m2 = t.match(/(\d{1,2})\s*(?:hs?|horas?)/);
+  if (m2) return `${String(+m2[1]).padStart(2,'0')}:00`;
+  const m3 = t.match(/(\d{1,2})(?:\s*(?:de\s+la\s+)?(?:tarde|noche))/);
+  if (m3) { const h = +m3[1] < 12 ? +m3[1] + 12 : +m3[1]; return `${String(h).padStart(2,'0')}:00`; }
+  const m4 = t.match(/(\d{1,2})(?:\s*(?:de\s+la\s+)?ma[nñ]ana)/);
+  if (m4) return `${String(+m4[1]).padStart(2,'0')}:00`;
+  const m5 = t.match(/^(\d{1,2})$/);
+  if (m5) return `${String(+m5[1]).padStart(2,'0')}:00`;
+  return null;
+}
+
+function saveReserva() {
+  const url      = cfg().webhookUrl;
+  if (!url || !url.startsWith('http')) return false;
+  const totalHrs = 4 + state.extraHours;
+  const endTime  = calcEndTime(state.startTime, totalHrs);
+  const id       = 'bot-rsv-' + Date.now();
+  const fechaStr = `${String(state.date.getDate()).padStart(2,'0')}/${String(state.date.getMonth()+1).padStart(2,'0')}/${state.date.getFullYear()}`;
+  const dayType  = isWeekend(state.date) ? 'weekend' : 'weekday';
+
+  const payload = {
+    'ID':              id,
+    'Tipo':            'reserva',
+    'Nombre guardado': state.eventName || '',
+    'Fecha':           fechaStr,
+    'Nombre evento':   state.eventName || '',
+    'Hora inicio':     state.startTime,
+    'Hora fin':        endTime,
+    'Duración (hs)':   totalHrs,
+    'Tipo de día':     dayType === 'weekday' ? 'Lunes–Jueves' : 'Vie/Sáb/Dom/Fer',
+    'Nº niños':        state.kids,
+    'Menú niños':      state.kidsMenu === 'alt' ? 'Alternativo' : 'Básico',
+    'Nº adultos':      state.adults,
+    'Menú adultos':    ADULT_MENU_NAMES[state.adultsMenu || 'none'],
+    'Horas extra':     state.extraHours,
+    'Personal extra':  state.extraStaff,
+    'Total ($)':       state.total,
+    'Descuento valor': '',
+    'Descuento tipo':  '',
+    'Descripción':     state.comments || '',
+    'Notas':           'Creado desde chatbot',
+    'Guardado el':     new Date().toISOString()
+  };
+
+  // Guardar en sheet
+  fetch(url, {
+    method:  'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body:    JSON.stringify(payload)
+  }).catch(() => {});
+
+  // Guardar en localStorage (compatible con presupuesto-salon.html)
+  try {
+    const saves = JSON.parse(localStorage.getItem('salonSaves') || '[]');
+    saves.unshift({
+      id, status: 'reserva', name: state.eventName || fechaStr,
+      total: state.total, synced: true, savedAt: new Date().toISOString(),
+      form: {
+        eventDate: dateISO(state.date), dayType,
+        numKids: String(state.kids), numAdults: String(state.adults),
+        kidsMenu: state.kidsMenu || 'basic', adultsMenu: state.adultsMenu || 'none',
+        extraHours: String(state.extraHours), extraStaff: String(state.extraStaff),
+        discValue: '0', discountType: 'none',
+        eventName: state.eventName || '',
+        startTime: state.startTime, eventDesc: state.comments || '', eventOthers: ''
+      }
+    });
+    localStorage.setItem('salonSaves', JSON.stringify(saves));
+  } catch(e) {}
+
+  return true;
+}
+
+function buildReservaSummary() {
+  const totalHrs = 4 + state.extraHours;
+  const endTime  = calcEndTime(state.startTime, totalHrs);
+  const menuK    = KIDS_MENU_NAMES[state.kidsMenu   || 'basic'];
+  const menuA    = ADULT_MENU_NAMES[state.adultsMenu || 'none'];
+
+  let t = `📋 *Resumen de la reserva*\n\n`;
+  t += `🎉 ${state.eventName}\n`;
+  t += `📅 ${fmtDate(state.date)}\n`;
+  t += `🕐 ${state.startTime} → ${endTime} (${totalHrs} hs)\n`;
+  t += `👶 ${state.kids} niños — ${menuK}\n`;
+  t += `🧑 ${state.adults} adultos — ${menuA}\n`;
+  if (state.extraStaff > 0) t += `👤 ${state.extraStaff} personal adicional\n`;
+  if (state.comments)        t += `💬 ${state.comments}\n`;
+  t += `\n💰 *Total: ${fmtCur(state.total)}*`;
+  return t;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FLUJO RESERVAS
+// ═══════════════════════════════════════════════════════════════
+async function startReservaFlow() {
+  state.step = 'reserva_select';
+  const url = cfg().webhookUrl;
+  if (!url || !url.startsWith('http')) {
+    botMsg('No hay webhook configurado. Configuralo en presupuesto-salon.html → Admin.');
+    state.step = 'done'; return;
+  }
+
+  botMsg('Buscando presupuestos guardados...', [], 500);
+
+  try {
+    const res  = await fetch(`${url}?action=getData&tipo=presupuesto`);
+    const data = await res.json();
+    const rows = data.presupuestos || [];
+
+    // Filtrar desde hoy en adelante
+    const hoy = new Date(); hoy.setHours(0,0,0,0);
+    const futuros = rows.filter(p => {
+      if (!p.Fecha) return false;
+      const [d,m,y] = p.Fecha.split('/');
+      return new Date(+y, +m-1, +d) >= hoy;
+    }).sort((a,b) => {
+      const [d1,m1,y1] = a.Fecha.split('/'); const [d2,m2,y2] = b.Fecha.split('/');
+      return new Date(+y1,+m1-1,+d1) - new Date(+y2,+m2-1,+d2);
+    });
+
+    if (futuros.length === 0) {
+      botMsg('No encontré presupuestos guardados desde hoy. Primero guardá un presupuesto y volvé a intentar.');
+      state.step = 'done'; return;
+    }
+
+    state._presCache = futuros;
+    const opts = futuros.slice(0, 6).map(p => ({
+      label: `📅 ${p.Fecha} — ${p['Nombre guardado'] || 'Sin nombre'} (${p['Nº niños']}N / ${p['Nº adultos']}A)`,
+      val:   '__pres__' + p.ID
+    }));
+    opts.push({ label: '❌ Cancelar', val: '__cancel_reserva__' });
+    botMsg('¿Qué presupuesto convertís en reserva?', opts);
+
+  } catch(e) {
+    botMsg('No pude cargar los presupuestos. Revisá la conexión e intentá de nuevo.');
+    state.step = 'done';
+  }
+}
+
+function selectPresupuesto(id) {
+  const pres = state._presCache.find(p => p.ID === id);
+  if (!pres) { botMsg('No encontré ese presupuesto.'); return; }
+
+  // Cargar datos del presupuesto en el state
+  const [d,m,y] = pres.Fecha.split('/');
+  state.date      = new Date(+y, +m-1, +d);
+  state.kids      = parseInt(pres['Nº niños'])    || 0;
+  state.adults    = parseInt(pres['Nº adultos'])   || 0;
+  state.extraHours= parseInt(pres['Horas extra'])  || 0;
+  state.extraStaff= parseInt(pres['Personal extra'])|| 0;
+  state.comments  = pres['Descripción'] || '';
+  state.clientName= pres['Nombre guardado'] || '';
+  state.total     = parseInt(pres['Total ($)'])     || 0;
+  const km = { 'Básico':'basic','Alternativo':'alt' };
+  const am = { 'Traen su comida':'none','Solo pizzas':'pizza','Pizzas y calzones':'pizza_calzone','Pizzas, calzones y chivitos':'pizza_calzone_chivito' };
+  state.kidsMenu   = km[pres['Menú niños']]  || 'basic';
+  state.adultsMenu = am[pres['Menú adultos']]|| 'none';
+  state._selectedPresId = id;
+  state.extrasAsked = true;
+  calculate(); // recalcular para consistencia
+
+  state.step = 'reserva_collecting';
+  state.eventName = null; state.startTime = null;
+  handleReservaCollecting();
+}
+
+function handleReservaCollecting() {
+  if (!state.eventName) {
+    botMsg(`Bien, presupuesto del *${fmtDate(state.date)}*.\n¿Cómo se llama el evento? (Ej: "Cumpleaños de Sofía")`);
+    state._waitingFor = 'eventName';
+    return;
+  }
+  if (!state.startTime) {
+    botMsg('¿A qué hora empieza? (Ej: 18:00, 6 de la tarde)');
+    state._waitingFor = 'startTime';
+    return;
+  }
+  // Todo completo → mostrar resumen
+  state.step = 'reserva_confirm';
+  botMsg(buildReservaSummary(), [
+    { label: '💾 Guardar reserva', val: '__save_reserva__' },
+    { label: '✏️ Modificar',       val: '__edit_reserva__' },
+  ]);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  MOTOR DE CONVERSACIÓN
 // ═══════════════════════════════════════════════════════════════
 function getNextMissing() {
@@ -584,6 +791,83 @@ function processMessage(raw) {
   if (raw === '__reset__') { resetChat(); return; }
 
   const t = norm(raw);
+
+  // ── Trigger reserva ───────────────────────────────────────
+  if (/\breserva\b/.test(t) &&
+      !['reserva_select','reserva_collecting','reserva_confirm','reserva_editing'].includes(state.step)) {
+    startReservaFlow();
+    return;
+  }
+
+  // ── Selección de presupuesto ──────────────────────────────
+  if (raw.startsWith('__pres__')) {
+    selectPresupuesto(raw.replace('__pres__', ''));
+    return;
+  }
+  if (raw === '__cancel_reserva__') {
+    state.step = 'done';
+    botMsg('Cancelado. ¿Qué más necesitás?', [
+      { label: '🔄 Nuevo presupuesto', val: '__reset__' }
+    ]);
+    return;
+  }
+
+  // ── Esperando eventName o startTime ──────────────────────
+  if (state._waitingFor === 'eventName') {
+    state.eventName = raw.trim();
+    state._waitingFor = null;
+    handleReservaCollecting();
+    return;
+  }
+  if (state._waitingFor === 'startTime') {
+    const parsed = parseTime(raw);
+    if (!parsed) {
+      botMsg('No entendí la hora. Escribila así: 18:00 o "6 de la tarde"');
+      return;
+    }
+    state.startTime = parsed;
+    state._waitingFor = null;
+    handleReservaCollecting();
+    return;
+  }
+
+  // ── Estado: reserva_confirm ───────────────────────────────
+  if (state.step === 'reserva_confirm') {
+    if (raw === '__save_reserva__' || /^(guarda|confirma|dale|si|sí|listo|ok)/.test(t)) {
+      const saved = saveReserva();
+      state.step  = 'done';
+      if (saved) botMsg('✅ ¡Reserva guardada en Google Sheets!', [], 400);
+      setTimeout(() => {
+        botMsg('¿Necesitás algo más?', [
+          { label: '🔄 Nuevo presupuesto', val: '__reset__' },
+          { label: '📋 Otra reserva',      val: 'reserva' },
+          { label: '✅ No, gracias',        val: '__bye__' },
+        ]);
+      }, 900);
+      return;
+    }
+    if (raw === '__edit_reserva__' || /cambi|modific/.test(t)) {
+      state.step = 'reserva_editing';
+      botMsg('¿Qué querés cambiar? (nombre del evento, hora de inicio)');
+      return;
+    }
+    return;
+  }
+
+  // ── Estado: reserva_editing ───────────────────────────────
+  if (state.step === 'reserva_editing') {
+    if (/nombre|evento/.test(t)) state.eventName = null;
+    if (/hora|inicio/.test(t))   state.startTime = null;
+    // Si dijo algo concreto, intentar extraerlo
+    const tp = parseTime(raw);
+    if (tp) { state.startTime = tp; }
+    else if (raw.trim().length > 3 && !/cambi|modific|hora|inicio/.test(t)) {
+      state.eventName = raw.trim(); // asumir que es el nombre del evento
+    }
+    state.step = 'reserva_collecting';
+    handleReservaCollecting();
+    return;
+  }
 
   // ── Quick replies de extras ───────────────────────────────
   if (raw === '__no_extras__') {
