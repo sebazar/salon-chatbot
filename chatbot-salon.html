@@ -219,12 +219,18 @@ function resetState() {
     clientName: null,
     extrasAsked: false,
     _waitingFor: null,
-    step: 'start',   // start | confirm | editing | done
-                     // reserva: reserva_select | reserva_collecting | reserva_confirm | reserva_editing
+    step: 'start',   // start | confirm | editing_menu | done
+                     // reserva: reserva_select | reserva_collecting | reserva_confirm | reserva_editing_menu
     total: null, _calc: null,
+    // Ajustes de precio
+    priceOverride: null,
+    discount: { type: 'none', value: 0 },
+    // Campos extra
+    notes: '',
     // Reserva
     eventName: null, startTime: null,
     _selectedPresId: null, _presCache: [],
+    _reservaFromScratch: false,
     _dateWarningShown: false
   };
 }
@@ -393,7 +399,14 @@ function calculate() {
   const xStaffCst  = state.extraStaff * C.staffCost;
 
   const total = basePrice + extraHrTotCst + kidsExtraCst + kidsUpgrade + adultMenuCst + recsCst + waitersCst + xStaffCst;
-  state.total = Math.round(total / 100) * 100;
+  let finalTotal = Math.round(total / 100) * 100;
+  // Aplicar descuento
+  const disc = state.discount || { type: 'none', value: 0 };
+  if (disc.type === 'pct'   && disc.value > 0) finalTotal = Math.round(finalTotal * (1 - disc.value / 100) / 100) * 100;
+  if (disc.type === 'fixed' && disc.value > 0) finalTotal = Math.max(0, finalTotal - disc.value);
+  // Precio manual (sobreescribe todo)
+  if (state.priceOverride !== null) finalTotal = state.priceOverride;
+  state.total = finalTotal;
   state._calc = {
     C, basePrice, km, am, kidsMenuPrc, adultMenuPrc,
     kidsExtraCst, kidsUpgrade, adultMenuCst,
@@ -419,7 +432,13 @@ function buildSummary() {
   t += `🧑 ${state.adults} adultos — ${menuA}\n`;
   t += `⏱ ${totalHrs} hs${state.extraHours > 0 ? ` (4 incluidas + ${state.extraHours} extra)` : ' (incluidas)'}\n`;
   if (state.extraStaff > 0) t += `👤 ${state.extraStaff} personal adicional\n`;
-  if (state.comments)        t += `💬 ${state.comments}\n`;
+  if (state.comments) t += `💬 Descripción: ${state.comments}\n`;
+  if (state.notes)    t += `📝 Nota: ${state.notes}\n`;
+  // Descuento / precio
+  const disc = state.discount || { type: 'none', value: 0 };
+  if (disc.type === 'pct'   && disc.value > 0) t += `🏷️ Descuento: ${disc.value}%\n`;
+  if (disc.type === 'fixed' && disc.value > 0) t += `🏷️ Descuento: ${fmtCur(disc.value)}\n`;
+  if (state.priceOverride !== null) t += `💰 Precio ajustado manualmente\n`;
   t += `\n💰 *Total: ${fmtCur(state.total)}*`;
   return t;
 }
@@ -495,10 +514,10 @@ function saveToSheet() {
     'Horas extra':     state.extraHours,
     'Personal extra':  state.extraStaff,
     'Total ($)':       state.total,
-    'Descuento valor': '',
-    'Descuento tipo':  '',
+    'Descuento valor': (state.discount?.value || ''),
+    'Descuento tipo':  (state.discount?.type === 'pct' ? '%' : state.discount?.type === 'fixed' ? '$' : ''),
     'Descripción':     state.comments || '',
-    'Notas':           'Creado desde chatbot',
+    'Notas':           state.notes || 'Creado desde chatbot',
     'Guardado el':     new Date().toISOString()
   };
 
@@ -561,10 +580,10 @@ function saveReserva() {
     'Horas extra':     state.extraHours,
     'Personal extra':  state.extraStaff,
     'Total ($)':       state.total,
-    'Descuento valor': '',
-    'Descuento tipo':  '',
+    'Descuento valor': (state.discount?.value || ''),
+    'Descuento tipo':  (state.discount?.type === 'pct' ? '%' : state.discount?.type === 'fixed' ? '$' : ''),
     'Descripción':     state.comments || '',
-    'Notas':           'Creado desde chatbot',
+    'Notas':           state.notes || 'Creado desde chatbot',
     'Guardado el':     new Date().toISOString()
   };
 
@@ -622,7 +641,12 @@ function buildReservaSummary() {
   t += `👶 ${state.kids} niños — ${menuK}\n`;
   t += `🧑 ${state.adults} adultos — ${menuA}\n`;
   if (state.extraStaff > 0) t += `👤 ${state.extraStaff} personal adicional\n`;
-  if (state.comments)        t += `💬 ${state.comments}\n`;
+  if (state.comments) t += `💬 Descripción: ${state.comments}\n`;
+  if (state.notes)    t += `📝 Nota: ${state.notes}\n`;
+  const disc = state.discount || { type: 'none', value: 0 };
+  if (disc.type === 'pct'   && disc.value > 0) t += `🏷️ Descuento: ${disc.value}%\n`;
+  if (disc.type === 'fixed' && disc.value > 0) t += `🏷️ Descuento: ${fmtCur(disc.value)}\n`;
+  if (state.priceOverride !== null) t += `💰 Precio ajustado manualmente\n`;
   t += `\n💰 *Total: ${fmtCur(state.total)}*`;
   return t;
 }
@@ -685,49 +709,64 @@ async function findTimeConflict(date, startTime, endTime) {
 // ═══════════════════════════════════════════════════════════════
 //  FLUJO RESERVAS
 // ═══════════════════════════════════════════════════════════════
-async function startReservaFlow() {
+
+// Punto de entrada: muestra menú de filtros
+function startReservaFlow() {
   state.step = 'reserva_select';
+  botMsg('¿Qué querés hacer?', [
+    { label: '📋 Desde hoy',        val: '__reserva_fromhoy__' },
+    { label: '📅 Un día específico', val: '__reserva_dia__'    },
+    { label: '📆 Un mes',            val: '__reserva_mes__'    },
+    { label: '➕ Nueva desde cero',  val: '__reserva_nueva__'  },
+    { label: '❌ Cancelar',           val: '__cancel_reserva__' },
+  ]);
+}
+
+// Carga presupuestos, aplica filtro y muestra lista para convertir
+async function fetchAndShowPresupuestos(filterFn, noResultsMsg) {
   const url = cfg().webhookUrl || WEBHOOK_URL;
-  if (!url || !url.startsWith('http')) {
-    botMsg('No hay webhook configurado. Configuralo en presupuesto-salon.html → Admin.');
-    state.step = 'done'; return;
-  }
-
-  botMsg('Buscando presupuestos guardados...', [], 500);
-
+  botMsg('Buscando presupuestos...', [], 400);
   try {
     const res  = await fetch(`${url}?action=getData&tipo=presupuesto`);
     const data = await res.json();
-    const rows = data.presupuestos || [];
-
-    // Filtrar desde hoy en adelante
-    const hoy = new Date(); hoy.setHours(0,0,0,0);
-    const futuros = rows.filter(p => {
-      if (!p.Fecha) return false;
-      const [d,m,y] = p.Fecha.split('/');
-      return new Date(+y, +m-1, +d) >= hoy;
-    }).sort((a,b) => {
+    const rows = (data.presupuestos || []).filter(p => p.Fecha && filterFn(p));
+    rows.sort((a,b) => {
       const [d1,m1,y1] = a.Fecha.split('/'); const [d2,m2,y2] = b.Fecha.split('/');
       return new Date(+y1,+m1-1,+d1) - new Date(+y2,+m2-1,+d2);
     });
-
-    if (futuros.length === 0) {
-      botMsg('No encontré presupuestos guardados desde hoy. Primero guardá un presupuesto y volvé a intentar.');
+    if (rows.length === 0) {
+      botMsg(noResultsMsg, [
+        { label: '🔄 Intentar otro filtro', val: 'reserva' },
+        { label: '➕ Nueva desde cero',     val: '__reserva_nueva__' },
+      ]);
       state.step = 'done'; return;
     }
-
-    state._presCache = futuros;
-    const opts = futuros.slice(0, 6).map(p => ({
-      label: `📅 ${p.Fecha} — ${p['Nombre guardado'] || 'Sin nombre'} (${p['Nº niños']}N / ${p['Nº adultos']}A)`,
+    state._presCache = rows;
+    const opts = rows.slice(0, 8).map(p => ({
+      label: `📅 ${p.Fecha} — ${p['Nombre guardado'] || 'Sin nombre'} (${p['Nº niños']}N/${p['Nº adultos']}A)`,
       val:   '__pres__' + p.ID
     }));
     opts.push({ label: '❌ Cancelar', val: '__cancel_reserva__' });
     botMsg('¿Qué presupuesto convertís en reserva?', opts);
-
   } catch(e) {
     botMsg('No pude cargar los presupuestos. Revisá la conexión e intentá de nuevo.');
     state.step = 'done';
   }
+}
+
+// Reserva desde cero: limpia state de presupuesto y empieza a recolectar
+function startReservaFromScratch() {
+  state.kids = null; state.adults = null; state.date = null;
+  state.kidsMenu = null; state.adultsMenu = null;
+  state.extraHours = 0; state.extraStaff = 0;
+  state.comments = ''; state.notes = '';
+  state.extrasAsked = false;
+  state.priceOverride = null; state.discount = { type: 'none', value: 0 };
+  state.eventName = null; state.startTime = null;
+  state._selectedPresId = null; state._reservaFromScratch = true;
+  state._dateWarningShown = false;
+  state.step = 'start';
+  botMsg('Vamos a crear una reserva nueva. ¿Para cuántos niños, cuántos adultos y qué fecha?');
 }
 
 function selectPresupuesto(id) {
@@ -861,19 +900,26 @@ async function handleMissing() {
     case 'ask_extras': {
       state.extrasAsked = true;
       botMsg(
-        '¿Necesitás agregar algo más al presupuesto?',
+        '¿Necesitás agregar algo más?',
         [
-          { label: '✅ No, está bien',     val: '__no_extras__' },
-          { label: '⏱ Horas extra',        val: '__want_hours__' },
-          { label: '👤 Personal adicional', val: '__want_staff__' },
-          { label: '💬 Comentario',         val: '__want_comment__' },
+          { label: '✅ No, está bien',     val: '__no_extras__'   },
+          { label: '⏱ Horas extra',        val: '__want_hours__'  },
+          { label: '👤 Personal adicional', val: '__want_staff__'  },
+          { label: '💬 Descripción',        val: '__want_comment__'},
+          { label: '📝 Nota interna',       val: '__want_notes__'  },
         ]
       );
       break;
     }
 
     case 'calculate':
-      showSummaryWithButtons();
+      if (state._reservaFromScratch) {
+        calculate();
+        state.step = 'reserva_collecting';
+        handleReservaCollecting();
+      } else {
+        showSummaryWithButtons();
+      }
       break;
   }
 }
@@ -885,8 +931,50 @@ function processMessage(raw) {
 
   // ── Trigger reserva ───────────────────────────────────────
   if (/\breserva\b/.test(t) &&
-      !['reserva_select','reserva_collecting','reserva_confirm','reserva_editing'].includes(state.step)) {
+      !['reserva_select','reserva_collecting','reserva_confirm',
+        'reserva_editing_menu'].includes(state.step)) {
     startReservaFlow();
+    return;
+  }
+
+  // ── Menú de filtro de reservas ────────────────────────────
+  if (raw === '__reserva_nueva__') { startReservaFromScratch(); return; }
+  if (raw === '__reserva_fromhoy__') {
+    const hoy = new Date(); hoy.setHours(0,0,0,0);
+    fetchAndShowPresupuestos(
+      p => { const [d,m,y]=p.Fecha.split('/'); return new Date(+y,+m-1,+d)>=hoy; },
+      'No hay presupuestos desde hoy. Podés crear una reserva desde cero.'
+    );
+    return;
+  }
+  if (raw === '__reserva_dia__') {
+    botMsg('¿Para qué día? (Ej: sábado, 15/06, 15 de junio)');
+    state._waitingFor = 'reserva_filter_dia'; return;
+  }
+  if (raw === '__reserva_mes__') {
+    botMsg('¿Qué mes? (Ej: junio, julio, 6)');
+    state._waitingFor = 'reserva_filter_mes'; return;
+  }
+  if (state._waitingFor === 'reserva_filter_dia') {
+    state._waitingFor = null;
+    const d = parseDateFromText(raw);
+    if (!d) { botMsg('No entendí la fecha. Intentá con el formato DD/MM o "el sábado".'); return; }
+    const ds = dateISO(d);
+    fetchAndShowPresupuestos(
+      p => { const [dd,mm,yy]=p.Fecha.split('/'); return `${yy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`===ds; },
+      `No hay presupuestos para el ${fmtDate(d)}.`
+    );
+    return;
+  }
+  if (state._waitingFor === 'reserva_filter_mes') {
+    state._waitingFor = null;
+    const mn = t.match(/\b(\d{1,2})\b/) ? +t.match(/\b(\d{1,2})\b/)[1] : null;
+    const monthNum = mn || MONTHS_ES[Object.keys(MONTHS_ES).find(k => t.includes(k))] || null;
+    if (!monthNum) { botMsg('No entendí el mes. Escribí el nombre (ej: junio) o el número (ej: 6).'); return; }
+    fetchAndShowPresupuestos(
+      p => +p.Fecha.split('/')[1] === monthNum,
+      `No hay presupuestos para ese mes.`
+    );
     return;
   }
 
@@ -927,83 +1015,171 @@ function processMessage(raw) {
     if (raw === '__save_reserva__' || /^(guarda|confirma|dale|si|sí|listo|ok)/.test(t)) {
       const saved = saveReserva();
       state.step  = 'done';
-      if (saved) botMsg('✅ ¡Reserva guardada en Google Sheets!', [], 400);
+      if (saved) botMsg('✅ ¡Reserva guardada!', [], 400);
       setTimeout(() => {
         botMsg('¿Necesitás algo más?', [
           { label: '🔄 Nuevo presupuesto', val: '__reset__' },
-          { label: '📋 Otra reserva',      val: 'reserva' },
-          { label: '✅ No, gracias',        val: '__bye__' },
+          { label: '📋 Otra reserva',      val: 'reserva'  },
+          { label: '✅ No, gracias',        val: '__bye__'  },
         ]);
       }, 900);
       return;
     }
     if (raw === '__edit_reserva__' || /cambi|modific/.test(t)) {
-      state.step = 'reserva_editing';
-      botMsg('¿Qué querés cambiar? (nombre del evento, hora de inicio)');
+      state.step = 'reserva_editing_menu';
+      botMsg('¿Qué querés cambiar?', [
+        { label: '🎉 Nombre evento',       val: '__re_eventname__'  },
+        { label: '🕐 Hora inicio',          val: '__re_starttime__'  },
+        { label: '📅 Fecha',               val: '__re_date__'       },
+        { label: '👶 Niños',               val: '__re_kids__'       },
+        { label: '🧑 Adultos',             val: '__re_adults__'     },
+        { label: '🍽️ Menú',               val: '__re_menu__'       },
+        { label: '⏱ Horas extra',          val: '__re_hours__'      },
+        { label: '💰 Precio final',         val: '__re_price__'      },
+        { label: '🏷️ Descuento',            val: '__re_discount__'   },
+        { label: '💬 Descripción',          val: '__re_desc__'       },
+        { label: '📝 Nota',               val: '__re_notes__'      },
+      ]);
       return;
     }
     return;
   }
 
-  // ── Estado: reserva_editing ───────────────────────────────
-  if (state.step === 'reserva_editing') {
-    if (/nombre|evento/.test(t)) state.eventName = null;
-    if (/hora|inicio/.test(t))   state.startTime = null;
-    // Si dijo algo concreto, intentar extraerlo
-    const tp = parseTime(raw);
-    if (tp) { state.startTime = tp; }
-    else if (raw.trim().length > 3 && !/cambi|modific|hora|inicio/.test(t)) {
-      state.eventName = raw.trim(); // asumir que es el nombre del evento
+  // ── Estado: reserva_editing_menu (maneja cada campo) ─────
+  if (state.step === 'reserva_editing_menu') {
+    const editMap = {
+      '__re_eventname__': ['eventName',       'Ingresá el nuevo nombre del evento:'],
+      '__re_starttime__': ['edit_starttime', '¿Nueva hora de inicio? (Ej: 18:00)'],
+      '__re_date__':      ['edit_date',  '¿Nueva fecha? (Ej: 15/06, el sábado)'],
+      '__re_kids__':      ['edit_kids',  '¿Cuántos niños?'],
+      '__re_adults__':    ['edit_adults','¿Cuántos adultos?'],
+      '__re_menu__':      ['edit_menu',  null],
+      '__re_hours__':     ['edit_hours', '¿Cuántas horas extra?'],
+      '__re_price__':     ['edit_price', '¿Cuál es el precio final? (número sin puntos)'],
+      '__re_discount__':  ['edit_discount', '¿Tipo de descuento? Escribí "15%" o "$2000"'],
+      '__re_desc__':      ['edit_desc',  '¿Cuál es la descripción?'],
+      '__re_notes__':     ['edit_notes', '¿Cuál es la nota interna?'],
+    };
+    if (editMap[raw]) {
+      const [wf, prompt] = editMap[raw];
+      if (wf === 'edit_menu') {
+        state._waitingFor = 'edit_menu_reserva';
+        botMsg('¿Con qué menú?', [
+          { label: '🍕 Básico + Pizzas',   val: 'menu basico ninos y pizzas adultos' },
+          { label: '🥙 Básico + Completo', val: 'menu basico ninos y completo adultos' },
+          { label: '⭐ Alt + Pizzas',       val: 'menu alternativo ninos y pizzas adultos' },
+          { label: '🚫 Adultos sin menú',  val: 'menu basico ninos traen comida adultos' },
+        ]);
+      } else {
+        state._waitingFor = wf;
+        botMsg(prompt);
+      }
+      return;
     }
-    state.step = 'reserva_collecting';
-    handleReservaCollecting();
+    // Texto libre → intentar extraer y volver a confirmar
+    extractFromText(raw);
+    calculate();
+    state.step = 'reserva_confirm';
+    botMsg(buildReservaSummary(), [
+      { label: '💾 Guardar reserva', val: '__save_reserva__' },
+      { label: '✏️ Modificar',       val: '__edit_reserva__' },
+    ]);
     return;
+  }
+
+  // ── Waiters para campos de reserva (editing) ──────────────
+  if (state._waitingFor === 'eventName' || state._waitingFor === 'edit_eventname') {
+    state.eventName = raw.trim(); state._waitingFor = null;
+    state.step = 'reserva_collecting'; handleReservaCollecting(); return;
   }
 
   // ── Quick replies de extras ───────────────────────────────
-  if (raw === '__no_extras__') {
-    handleMissing(); // va a 'calculate' → muestra resumen
-    return;
-  }
-  if (raw === '__want_hours__') {
-    botMsg('¿Cuántas horas extra necesitás?');
-    state._waitingFor = 'hours';
-    return;
-  }
-  if (raw === '__want_staff__') {
-    botMsg('¿Cuántas personas de personal adicional?');
-    state._waitingFor = 'staff';
-    return;
-  }
-  if (raw === '__want_comment__') {
-    botMsg('Contame, ¿qué querés agregar como comentario?');
-    state._waitingFor = 'comment';
-    return;
-  }
+  if (raw === '__no_extras__') { handleMissing(); return; }
+  if (raw === '__want_hours__')   { botMsg('¿Cuántas horas extra?'); state._waitingFor = 'hours'; return; }
+  if (raw === '__want_staff__')   { botMsg('¿Cuántas personas de personal adicional?'); state._waitingFor = 'staff'; return; }
+  if (raw === '__want_comment__') { botMsg('¿Cuál es la descripción del evento?'); state._waitingFor = 'comment'; return; }
+  if (raw === '__want_notes__')   { botMsg('¿Cuál es la nota interna?'); state._waitingFor = 'notes'; return; }
 
   // ── Esperando respuesta puntual ───────────────────────────
+  const backToConfirm = isReserva => {
+    calculate();
+    if (isReserva) {
+      state.step = 'reserva_confirm';
+      botMsg(buildReservaSummary(), [
+        { label: '💾 Guardar reserva', val: '__save_reserva__' },
+        { label: '✏️ Modificar',       val: '__edit_reserva__' },
+      ]);
+    } else {
+      showSummaryWithButtons();
+    }
+  };
+  const isRsv = ['reserva_collecting','reserva_confirm','reserva_editing_menu'].includes(state.step);
+
   if (state._waitingFor === 'hours') {
-    const m = t.match(/\d+/);
-    if (m) state.extraHours = +m[0];
-    state._waitingFor = null;
-    handleMissing();
-    return;
+    const m = t.match(/\d+/); if (m) state.extraHours = +m[0];
+    state._waitingFor = null; handleMissing(); return;
   }
   if (state._waitingFor === 'staff') {
-    const m = t.match(/\d+/);
-    if (m) state.extraStaff = +m[0];
-    state._waitingFor = null;
-    handleMissing();
-    return;
+    const m = t.match(/\d+/); if (m) state.extraStaff = +m[0];
+    state._waitingFor = null; handleMissing(); return;
   }
   if (state._waitingFor === 'comment') {
-    state.comments = raw;
-    state._waitingFor = null;
-    handleMissing();
-    return;
+    state.comments = raw; state._waitingFor = null; handleMissing(); return;
+  }
+  if (state._waitingFor === 'notes') {
+    state.notes = raw; state._waitingFor = null; handleMissing(); return;
+  }
+  // Campos de edición post-resumen
+  if (state._waitingFor === 'edit_date') {
+    const d = parseDateFromText(raw);
+    if (!d) { botMsg('No entendí la fecha. Intentá con DD/MM o "el sábado".'); return; }
+    state.date = d; state._dateWarningShown = false; state._waitingFor = null;
+    if (isRsv) { state.step='reserva_collecting'; handleReservaCollecting(); }
+    else { state.extrasAsked=true; backToConfirm(false); } return;
+  }
+  if (state._waitingFor === 'edit_kids') {
+    const m = t.match(/\d+/); if (m) state.kids = +m[0];
+    state._waitingFor = null; backToConfirm(isRsv); return;
+  }
+  if (state._waitingFor === 'edit_adults') {
+    const m = t.match(/\d+/); if (m) state.adults = +m[0];
+    state._waitingFor = null; backToConfirm(isRsv); return;
+  }
+  if (state._waitingFor === 'edit_menu' || state._waitingFor === 'edit_menu_reserva') {
+    const wasReservaMenu = state._waitingFor === 'edit_menu_reserva';
+    extractFromText(raw); state._waitingFor = null;
+    backToConfirm(isRsv || wasReservaMenu); return;
+  }
+  if (state._waitingFor === 'edit_hours') {
+    const m = t.match(/\d+/); if (m) state.extraHours = +m[0];
+    state._waitingFor = null; backToConfirm(isRsv); return;
+  }
+  if (state._waitingFor === 'edit_price') {
+    const m = raw.replace(/\./g,'').match(/\d+/);
+    if (m) { state.priceOverride = +m[0]; state.discount = { type:'none', value:0 }; }
+    state._waitingFor = null; backToConfirm(isRsv); return;
+  }
+  if (state._waitingFor === 'edit_discount') {
+    const pct = raw.match(/(\d+(?:[.,]\d+)?)\s*%/);
+    const fix = raw.replace(/\./g,'').match(/\$?\s*(\d+)/);
+    if (pct) { state.discount = { type:'pct', value: parseFloat(pct[1]) }; state.priceOverride = null; }
+    else if (fix) { state.discount = { type:'fixed', value: +fix[1] }; state.priceOverride = null; }
+    state._waitingFor = null; backToConfirm(isRsv); return;
+  }
+  if (state._waitingFor === 'edit_desc') {
+    state.comments = raw; state._waitingFor = null; backToConfirm(isRsv); return;
+  }
+  if (state._waitingFor === 'edit_notes') {
+    state.notes = raw; state._waitingFor = null; backToConfirm(isRsv); return;
+  }
+  if (state._waitingFor === 'edit_starttime') {
+    const p = parseTime(raw);
+    if (!p) { botMsg('No entendí la hora. Escribila así: 18:00 o "6 de la tarde"'); return; }
+    state.startTime = p; state._waitingFor = null;
+    state.step = 'reserva_collecting'; handleReservaCollecting(); return;
   }
 
-  // ── Estado: confirm ───────────────────────────────────────
+  // ── Estado: confirm (presupuesto) ─────────────────────────
   if (state.step === 'confirm') {
     if (raw === '__save__' || /^(guarda|confirma|dale|si|sí|listo|ok)/.test(t)) {
       const saved = saveToSheet();
@@ -1014,19 +1190,28 @@ function processMessage(raw) {
       setTimeout(() => {
         botMsg('¿Necesitás otro presupuesto?', [
           { label: '🔄 Sí, nuevo',   val: '__reset__' },
-          { label: '✅ No, gracias', val: '__bye__' },
+          { label: '✅ No, gracias', val: '__bye__'   },
         ]);
       }, saved ? 1500 : 900);
       return;
     }
     if (raw === '__edit__' || /cambi|modific|edit/.test(t)) {
-      state.step = 'editing';
-      botMsg('¿Qué querés cambiar?\n(fecha, niños, adultos, menú, horas, personal, comentario…)');
+      state.step = 'editing_menu';
+      botMsg('¿Qué querés cambiar?', [
+        { label: '📅 Fecha',               val: '__ed_date__'     },
+        { label: '👶 Niños',               val: '__ed_kids__'     },
+        { label: '🧑 Adultos',             val: '__ed_adults__'   },
+        { label: '🍽️ Menú',               val: '__ed_menu__'     },
+        { label: '⏱ Horas extra',          val: '__ed_hours__'    },
+        { label: '👤 Personal adicional',   val: '__ed_staff__'    },
+        { label: '💰 Precio final',         val: '__ed_price__'    },
+        { label: '🏷️ Descuento',            val: '__ed_discount__' },
+        { label: '💬 Descripción',          val: '__ed_desc__'     },
+        { label: '📝 Nota',               val: '__ed_notes__'    },
+      ]);
       return;
     }
-    // Escribió algo libre en confirm → intentar extraer y recalcular
-    extractFromText(raw);
-    calculate();
+    extractFromText(raw); calculate();
     botMsg(buildSummary(), [
       { label: '💾 Guardar', val: '__save__' },
       { label: '✏️ Modificar', val: '__edit__' },
@@ -1034,41 +1219,47 @@ function processMessage(raw) {
     return;
   }
 
-  // ── Estado: editing ───────────────────────────────────────
-  if (state.step === 'editing') {
-    // Borrar el campo que mencionó
-    if (/fecha|dia|fech/.test(t))                             { state.date = null; state._dateWarningShown = false; }
-    if (/nino|chico|menor/.test(t) && !/adulto/.test(t))     state.kids = null;
-    if (/adulto|mayor|grande/.test(t) && !/nino/.test(t))    state.adults = null;
-    if (/menu|comi/.test(t))        { state.kidsMenu = null; state.adultsMenu = null; }
-    if (/hora|duraci/.test(t))        state.extraHours = 0;
-    if (/personal|staff/.test(t))     state.extraStaff = 0;
-    if (/comentar|nota/.test(t))      state.comments = '';
-
-    // Intentar extraer de lo que dijeron
-    extractFromText(raw);
-    state.step = 'start';
-
-    // Si cambiaron algo de los mandatorios, volver a preguntar extras también
-    if (!state.date || state.kids === null || state.adults === null ||
-        !state.kidsMenu || !state.adultsMenu) {
-      state.extrasAsked = false;
+  // ── Estado: editing_menu (presupuesto) ────────────────────
+  if (state.step === 'editing_menu') {
+    const edMap = {
+      '__ed_date__':     ['edit_date',    '¿Nueva fecha?'],
+      '__ed_kids__':     ['edit_kids',    '¿Cuántos niños?'],
+      '__ed_adults__':   ['edit_adults',  '¿Cuántos adultos?'],
+      '__ed_menu__':     ['edit_menu',    null],
+      '__ed_hours__':    ['edit_hours',   '¿Cuántas horas extra?'],
+      '__ed_staff__':    ['edit_staff',   '¿Cuántas personas de personal adicional?'],
+      '__ed_price__':    ['edit_price',   '¿Cuál es el precio final?'],
+      '__ed_discount__': ['edit_discount','¿Tipo de descuento? Escribí "15%" o "$2000"'],
+      '__ed_desc__':     ['edit_desc',    '¿Cuál es la descripción?'],
+      '__ed_notes__':    ['edit_notes',   '¿Cuál es la nota interna?'],
+    };
+    if (edMap[raw]) {
+      const [wf, prompt] = edMap[raw];
+      if (wf === 'edit_menu') {
+        state._waitingFor = 'edit_menu';
+        botMsg('¿Con qué menú?', [
+          { label: '🍕 Básico + Pizzas',   val: 'menu basico ninos y pizzas adultos' },
+          { label: '🥙 Básico + Completo', val: 'menu basico ninos y completo adultos' },
+          { label: '⭐ Alt + Pizzas',       val: 'menu alternativo ninos y pizzas adultos' },
+          { label: '🚫 Adultos sin menú',  val: 'menu basico ninos traen comida adultos' },
+        ]);
+      } else if (wf === 'edit_staff') {
+        botMsg(prompt); state._waitingFor = 'staff';
+      } else {
+        state._waitingFor = wf; botMsg(prompt);
+      }
+      return;
     }
-
-    handleMissing();
-    return;
+    // Texto libre
+    extractFromText(raw); state.step = 'confirm'; backToConfirm(false); return;
   }
 
   // ── Estado: done ──────────────────────────────────────────
   if (state.step === 'done') {
     if (raw === '__bye__' || /^(no|gracias|listo|ok|chau)/.test(t)) {
-      botMsg('¡Hasta pronto! 👋');
-      return;
+      botMsg('¡Hasta pronto! 👋'); return;
     }
-    resetState();
-    extractFromText(raw);
-    handleMissing();
-    return;
+    resetState(); extractFromText(raw); handleMissing(); return;
   }
 
   // ── Estado normal (start): extraer y manejar ─────────────
