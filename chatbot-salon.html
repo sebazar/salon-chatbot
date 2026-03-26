@@ -412,6 +412,7 @@ function calculate() {
   const recsNeeded = state.kids > 0 ? Math.ceil(state.kids / C.kidsPerRec) : 0;
   const actualRecs = state.kids > 0 ? Math.max(recsNeeded, C.recIncluded)  : 0;
   // Mozo obligatorio desde freeThr adultos con menú
+  // El primer mozo está incluido cuando hay hasta smallThr adultos
   const waiters    = (state.adults >= freeThr && am !== 'none')
                        ? Math.ceil(state.adults / C.adultsPerWaiter) : 0;
   const totalStaff = actualRecs + waiters + state.extraStaff;
@@ -421,7 +422,8 @@ function calculate() {
 
   const recsExtra  = Math.max(0, recsNeeded - C.recIncluded);
   const recsCst    = recsExtra  * C.staffCost;
-  const waitersCst = waiters    * C.staffCost;
+  // El primer mozo siempre está incluido; los adicionales se cobran
+  const waitersCst = Math.max(0, waiters - 1) * C.staffCost;
   const xStaffCst  = state.extraStaff * C.staffCost;
 
   const total = basePrice + extraHrTotCst + kidsExtraCst + kidsUpgrade + adultMenuCst + recsCst + waitersCst + xStaffCst;
@@ -478,7 +480,7 @@ function buildSummary() {
       t += `🎪 ${b.actualRecs} animador${b.actualRecs > 1 ? 'es' : ''}`;
       t += b.recsCst > 0 ? ` — ${fmtCur(b.recsCst)} (${b.recsExtra} extra)\n` : ' (incluidos)\n';
     }
-    if (b.waiters > 0) t += `🧑‍🍳 ${b.waiters} mozo${b.waiters > 1 ? 's' : ''}: ${fmtCur(b.waitersCst)}\n`;
+    if (b.waiters > 0) t += `🧑‍🍳 ${b.waiters} mozo${b.waiters > 1 ? 's' : ''}` + (b.waitersCst > 0 ? `: ${fmtCur(b.waitersCst)}\n` : ' (incluido)\n');
   }
   if (state.extraStaff > 0 && b) t += `👤 ${state.extraStaff} personal adicional: ${fmtCur(b.xStaffCst)}\n`;
 
@@ -617,7 +619,6 @@ function saveToSheet() {
     'Personal extra':  state.extraStaff,
     'Nº animadores':   state._calc?.actualRecs  ?? '',
     'Nº mozos':        state._calc?.waiters     ?? '',
-    'Precio original ($)': state.total ?? '',
     'Total ($)':       state.total,
     'Descuento valor': (state.discount?.value || ''),
     'Descuento tipo':  (state.discount?.type === 'pct' ? '%' : state.discount?.type === 'fixed' ? '$' : ''),
@@ -686,7 +687,6 @@ function saveReserva() {
     'Personal extra':  state.extraStaff,
     'Nº animadores':   state._calc?.actualRecs  ?? '',
     'Nº mozos':        state._calc?.waiters     ?? '',
-    'Precio original ($)': state.total ?? '',
     'Total ($)':       state.total,
     'Descuento valor': (state.discount?.value || ''),
     'Descuento tipo':  (state.discount?.type === 'pct' ? '%' : state.discount?.type === 'fixed' ? '$' : ''),
@@ -766,7 +766,7 @@ function buildReservaSummary() {
       t += `🎪 ${br.actualRecs} animador${br.actualRecs > 1 ? 'es' : ''}`;
       t += br.recsCst > 0 ? ` — ${fmtCur(br.recsCst)} (${br.recsExtra} extra)\n` : ' (incluidos)\n';
     }
-    if (br.waiters > 0) t += `🧑‍🍳 ${br.waiters} mozo${br.waiters > 1 ? 's' : ''}: ${fmtCur(br.waitersCst)}\n`;
+    if (br.waiters > 0) t += `🧑‍🍳 ${br.waiters} mozo${br.waiters > 1 ? 's' : ''}` + (br.waitersCst > 0 ? `: ${fmtCur(br.waitersCst)}\n` : ' (incluido)\n');
   }
   if (state.extraStaff > 0 && br) t += `👤 ${state.extraStaff} personal adicional: ${fmtCur(br.xStaffCst)}\n`;
   if (br && br.extraHrTotCst > 0) t += `⏱ Horas extra: ${fmtCur(br.extraHrTotCst)}\n`;
