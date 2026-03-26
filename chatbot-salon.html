@@ -451,21 +451,48 @@ function buildSummary() {
   const totalHrs = 4 + state.extraHours;
   const dayLabel = isWeekend(state.date) ? 'fin de semana 🎉' : 'día de semana';
 
+  const b = state._calc;
+
   let t = `📋 *Resumen del presupuesto*\n\n`;
   if (state.clientName) t += `👤 ${state.clientName}\n`;
   t += `📅 ${fmtDate(state.date)} — ${dayLabel}\n`;
+  t += `⏱ ${totalHrs} hs\n\n`;
+
+  // ── Desglose ──────────────────────────────────────────────
+  if (b) t += `🏠 Base ${dayLabel}: ${fmtCur(b.basePrice)}\n`;
+
+  // Niños
   t += `👶 ${state.kids} niños — ${menuK}\n`;
+  if (b) {
+    if (b.kidsUpgrade  > 0) t += `   └ Upgrade Nuggets: ${fmtCur(b.kidsUpgrade)}\n`;
+    if (b.kidsExtraCst > 0) t += `   └ ${b.kidsExtra} niños extra: ${fmtCur(b.kidsExtraCst)}\n`;
+  }
+
+  // Adultos
   t += `🧑 ${state.adults} adultos — ${menuA}\n`;
-  t += `⏱ ${totalHrs} hs${state.extraHours > 0 ? ` (4 incluidas + ${state.extraHours} extra)` : ' (incluidas)'}\n`;
-  if (state.extraStaff > 0) t += `👤 ${state.extraStaff} personal adicional\n`;
-  if (state.comments) t += `💬 Descripción: ${state.comments}\n`;
-  if (state.notes)    t += `📝 Nota: ${state.notes}\n`;
-  // Precio con ajustes
+  if (b && b.adultMenuCst > 0) t += `   └ Menú (${state.adults} × ${fmtCur(b.adultMenuPrc)}): ${fmtCur(b.adultMenuCst)}\n`;
+
+  // Staff
+  if (b) {
+    if (b.actualRecs > 0) {
+      t += `🎪 ${b.actualRecs} animador${b.actualRecs > 1 ? 'es' : ''}`;
+      t += b.recsCst > 0 ? ` — ${fmtCur(b.recsCst)} (${b.recsExtra} extra)\n` : ' (incluidos)\n';
+    }
+    if (b.waiters > 0) t += `🧑‍🍳 ${b.waiters} mozo${b.waiters > 1 ? 's' : ''}: ${fmtCur(b.waitersCst)}\n`;
+  }
+  if (state.extraStaff > 0 && b) t += `👤 ${state.extraStaff} personal adicional: ${fmtCur(b.xStaffCst)}\n`;
+
+  // Horas extra
+  if (b && b.extraHrTotCst > 0) t += `⏱ Horas extra: ${fmtCur(b.extraHrTotCst)}\n`;
+
+  if (state.comments) t += `\n💬 ${state.comments}\n`;
+  if (state.notes)    t += `📝 ${state.notes}\n`;
+
+  // ── Precio final ──────────────────────────────────────────
   const disc = state.discount || { type: 'none', value: 0 };
   const hasDisc = disc.type !== 'none' && disc.value > 0;
   const hasOvr  = state.priceOverride !== null;
-  const hasAdj  = hasDisc || hasOvr;
-  if (hasAdj && state._baseTotal) t += `\n~~Precio calculado: ${fmtCur(state._baseTotal)}~~\n`;
+  if ((hasDisc || hasOvr) && state._baseTotal) t += `\n~~Subtotal: ${fmtCur(state._baseTotal)}~~\n`;
   if (hasDisc && disc.type === 'pct')   t += `🏷️ Descuento: ${disc.value}%\n`;
   if (hasDisc && disc.type === 'fixed') t += `🏷️ Descuento: ${fmtCur(disc.value)}\n`;
   if (hasOvr) t += `✏️ Precio ajustado manualmente\n`;
@@ -705,20 +732,42 @@ function buildReservaSummary() {
   const menuA    = ADULT_MENU_NAMES[state.adultsMenu || 'none'];
 
   let t = `📋 *Resumen de la reserva*\n\n`;
+  const br = state._calc;
+
   t += `🎉 ${state.eventName}\n`;
   t += `📅 ${fmtDate(state.date)}\n`;
-  t += `🕐 ${state.startTime} → ${endTime} (${totalHrs} hs)\n`;
+  t += `🕐 ${state.startTime} → ${endTime} (${totalHrs} hs)\n\n`;
+
+  // ── Desglose ──────────────────────────────────────────────
+  if (br) t += `🏠 Base: ${fmtCur(br.basePrice)}\n`;
+
   t += `👶 ${state.kids} niños — ${menuK}\n`;
+  if (br) {
+    if (br.kidsUpgrade  > 0) t += `   └ Upgrade Nuggets: ${fmtCur(br.kidsUpgrade)}\n`;
+    if (br.kidsExtraCst > 0) t += `   └ ${br.kidsExtra} niños extra: ${fmtCur(br.kidsExtraCst)}\n`;
+  }
+
   t += `🧑 ${state.adults} adultos — ${menuA}\n`;
-  if (state.extraStaff > 0) t += `👤 ${state.extraStaff} personal adicional\n`;
-  if (state.comments) t += `💬 Descripción: ${state.comments}\n`;
-  if (state.notes)    t += `📝 Nota: ${state.notes}\n`;
-  // Precio con ajustes
+  if (br && br.adultMenuCst > 0) t += `   └ Menú (${state.adults} × ${fmtCur(br.adultMenuPrc)}): ${fmtCur(br.adultMenuCst)}\n`;
+
+  if (br) {
+    if (br.actualRecs > 0) {
+      t += `🎪 ${br.actualRecs} animador${br.actualRecs > 1 ? 'es' : ''}`;
+      t += br.recsCst > 0 ? ` — ${fmtCur(br.recsCst)} (${br.recsExtra} extra)\n` : ' (incluidos)\n';
+    }
+    if (br.waiters > 0) t += `🧑‍🍳 ${br.waiters} mozo${br.waiters > 1 ? 's' : ''}: ${fmtCur(br.waitersCst)}\n`;
+  }
+  if (state.extraStaff > 0 && br) t += `👤 ${state.extraStaff} personal adicional: ${fmtCur(br.xStaffCst)}\n`;
+  if (br && br.extraHrTotCst > 0) t += `⏱ Horas extra: ${fmtCur(br.extraHrTotCst)}\n`;
+
+  if (state.comments) t += `\n💬 ${state.comments}\n`;
+  if (state.notes)    t += `📝 ${state.notes}\n`;
+
+  // ── Precio final ──────────────────────────────────────────
   const disc = state.discount || { type: 'none', value: 0 };
   const hasDisc = disc.type !== 'none' && disc.value > 0;
   const hasOvr  = state.priceOverride !== null;
-  const hasAdj  = hasDisc || hasOvr;
-  if (hasAdj && state._baseTotal) t += `\n~~Precio calculado: ${fmtCur(state._baseTotal)}~~\n`;
+  if ((hasDisc || hasOvr) && state._baseTotal) t += `\n~~Subtotal: ${fmtCur(state._baseTotal)}~~\n`;
   if (hasDisc && disc.type === 'pct')   t += `🏷️ Descuento: ${disc.value}%\n`;
   if (hasDisc && disc.type === 'fixed') t += `🏷️ Descuento: ${fmtCur(disc.value)}\n`;
   if (hasOvr) t += `✏️ Precio ajustado manualmente\n`;
