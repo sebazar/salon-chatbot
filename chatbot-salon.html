@@ -224,7 +224,8 @@ function resetState() {
     total: null, _calc: null,
     // Reserva
     eventName: null, startTime: null,
-    _selectedPresId: null, _presCache: []
+    _selectedPresId: null, _presCache: [],
+    _dateWarningShown: false
   };
 }
 
@@ -627,6 +628,61 @@ function buildReservaSummary() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  VALIDACIONES DE CONFLICTO
+// ═══════════════════════════════════════════════════════════════
+function timeToMins(t) {
+  const [h, m] = (t || '00:00').split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+function timesOverlap(s1, e1, s2, e2) {
+  return timeToMins(s1) < timeToMins(e2) && timeToMins(s2) < timeToMins(e1);
+}
+
+async function fetchReservas() {
+  const url = cfg().webhookUrl || WEBHOOK_URL;
+  try {
+    const res  = await fetch(`${url}?action=getData&tipo=reserva`);
+    const data = await res.json();
+    return data.reservas || [];
+  } catch(e) { return []; }
+}
+
+// Muestra aviso (no bloquea) si ya hay reservas ese día — se llama al confirmar fecha en presupuesto
+async function warnReservasForDate(date) {
+  if (state._dateWarningShown) return;
+  state._dateWarningShown = true;
+  const reservas = await fetchReservas();
+  const dateStr  = dateISO(date);
+  const same = reservas.filter(r => {
+    if (!r.Fecha) return false;
+    const [d,m,y] = r.Fecha.split('/');
+    return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}` === dateStr;
+  });
+  if (same.length === 0) return;
+  const list = same.map(r =>
+    `• ${r['Nombre evento'] || r['Nombre guardado'] || 'Sin nombre'}` +
+    (r['Hora inicio'] ? ` (${r['Hora inicio']}–${r['Hora fin']})` : '')
+  ).join('\n');
+  botMsg(
+    `⚠️ Ese día ya tiene ${same.length === 1 ? 'una reserva' : same.length + ' reservas'}:\n${list}`,
+    [], 150
+  );
+}
+
+// Devuelve la reserva que se superpone con el horario dado (o null). Excluye el presupuesto origen.
+async function findTimeConflict(date, startTime, endTime) {
+  const reservas = await fetchReservas();
+  const dateStr  = dateISO(date);
+  return reservas.find(r => {
+    if (!r.Fecha || !r['Hora inicio'] || !r['Hora fin']) return false;
+    if (r.ID === state._selectedPresId) return false;
+    const [d,m,y] = r.Fecha.split('/');
+    if (`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}` !== dateStr) return false;
+    return timesOverlap(startTime, endTime, r['Hora inicio'], r['Hora fin']);
+  }) || null;
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  FLUJO RESERVAS
 // ═══════════════════════════════════════════════════════════════
 async function startReservaFlow() {
@@ -701,7 +757,7 @@ function selectPresupuesto(id) {
   handleReservaCollecting();
 }
 
-function handleReservaCollecting() {
+async function handleReservaCollecting() {
   if (!state.eventName) {
     botMsg(`Bien, presupuesto del *${fmtDate(state.date)}*.\n¿Cómo se llama el evento? (Ej: "Cumpleaños de Sofía")`);
     state._waitingFor = 'eventName';
@@ -712,7 +768,26 @@ function handleReservaCollecting() {
     state._waitingFor = 'startTime';
     return;
   }
-  // Todo completo → mostrar resumen
+
+  // ── Validación de superposición horaria ──────────────────────
+  const totalHrs = 4 + state.extraHours;
+  const endTime  = calcEndTime(state.startTime, totalHrs);
+  const conflict = await findTimeConflict(state.date, state.startTime, endTime);
+
+  if (conflict) {
+    // Bloquear: hay superposición, no se puede guardar
+    state.step = 'reserva_collecting';
+    state.startTime = null;
+    state._waitingFor = 'startTime';
+    botMsg(
+      `⛔ Ese horario se superpone con *${conflict['Nombre evento'] || conflict['Nombre guardado'] || 'otra reserva'}* ` +
+      `(${conflict['Hora inicio']}–${conflict['Hora fin']}).\n\n` +
+      `No se puede guardar. ¿A qué hora empieza el evento?`
+    );
+    return;
+  }
+
+  // ── Sin conflicto: mostrar resumen ───────────────────────────
   state.step = 'reserva_confirm';
   botMsg(buildReservaSummary(), [
     { label: '💾 Guardar reserva', val: '__save_reserva__' },
@@ -743,7 +818,7 @@ function showSummaryWithButtons() {
   state.step = 'confirm';
 }
 
-function handleMissing() {
+async function handleMissing() {
   const next = getNextMissing();
   switch (next) {
 
@@ -769,6 +844,8 @@ function handleMissing() {
 
     case 'ask_menus': {
       const dn = isWeekend(state.date) ? 'fin de semana 🎉' : 'día de semana';
+      // Aviso asincrónico si ya hay reservas ese día (no bloquea el flujo)
+      warnReservasForDate(state.date);
       botMsg(
         `Perfecto, el *${fmtDate(state.date)}* es ${dn}.\n¿Con qué menú?`,
         [
@@ -960,7 +1037,7 @@ function processMessage(raw) {
   // ── Estado: editing ───────────────────────────────────────
   if (state.step === 'editing') {
     // Borrar el campo que mencionó
-    if (/fecha|dia|fech/.test(t))                             state.date = null;
+    if (/fecha|dia|fech/.test(t))                             { state.date = null; state._dateWarningShown = false; }
     if (/nino|chico|menor/.test(t) && !/adulto/.test(t))     state.kids = null;
     if (/adulto|mayor|grande/.test(t) && !/nino/.test(t))    state.adults = null;
     if (/menu|comi/.test(t))        { state.kidsMenu = null; state.adultsMenu = null; }
