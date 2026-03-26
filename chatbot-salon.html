@@ -376,7 +376,8 @@ function calculate() {
 
   // Staff (igual lógica que presupuesto-salon.html)
   const recsNeeded    = state.kids   > 0 ? Math.ceil(state.kids   / C.kidsPerRec)      : 0;
-  const waiters       = state.adults > 0 ? Math.ceil(state.adults / C.adultsPerWaiter) : 0;
+  // Mozos solo si hay menú de adultos (o se agregaron como extra)
+  const waiters       = (state.adults > 0 && am !== 'none') ? Math.ceil(state.adults / C.adultsPerWaiter) : 0;
   const actualRecs    = state.kids   > 0 ? Math.max(recsNeeded, C.recIncluded)         : 0;
   const totalStaff    = actualRecs + waiters + state.extraStaff;
 
@@ -399,19 +400,21 @@ function calculate() {
   const xStaffCst  = state.extraStaff * C.staffCost;
 
   const total = basePrice + extraHrTotCst + kidsExtraCst + kidsUpgrade + adultMenuCst + recsCst + waitersCst + xStaffCst;
-  let finalTotal = Math.round(total / 100) * 100;
+  let baseTotal = Math.round(total / 100) * 100;
+  let finalTotal = baseTotal;
   // Aplicar descuento
   const disc = state.discount || { type: 'none', value: 0 };
   if (disc.type === 'pct'   && disc.value > 0) finalTotal = Math.round(finalTotal * (1 - disc.value / 100) / 100) * 100;
   if (disc.type === 'fixed' && disc.value > 0) finalTotal = Math.max(0, finalTotal - disc.value);
   // Precio manual (sobreescribe todo)
   if (state.priceOverride !== null) finalTotal = state.priceOverride;
+  state._baseTotal = baseTotal;   // precio calculado antes de ajustes
   state.total = finalTotal;
   state._calc = {
     C, basePrice, km, am, kidsMenuPrc, adultMenuPrc,
     kidsExtraCst, kidsUpgrade, adultMenuCst,
     recsCst, waitersCst, xStaffCst, extraHrTotCst, salonExtraCst,
-    kidsIncl, kidsExtra, recsNeeded, recsExtra, waiters
+    kidsIncl, kidsExtra, recsNeeded, recsExtra, waiters, actualRecs
   };
   return state.total;
 }
@@ -434,11 +437,15 @@ function buildSummary() {
   if (state.extraStaff > 0) t += `👤 ${state.extraStaff} personal adicional\n`;
   if (state.comments) t += `💬 Descripción: ${state.comments}\n`;
   if (state.notes)    t += `📝 Nota: ${state.notes}\n`;
-  // Descuento / precio
+  // Precio con ajustes
   const disc = state.discount || { type: 'none', value: 0 };
-  if (disc.type === 'pct'   && disc.value > 0) t += `🏷️ Descuento: ${disc.value}%\n`;
-  if (disc.type === 'fixed' && disc.value > 0) t += `🏷️ Descuento: ${fmtCur(disc.value)}\n`;
-  if (state.priceOverride !== null) t += `💰 Precio ajustado manualmente\n`;
+  const hasDisc = disc.type !== 'none' && disc.value > 0;
+  const hasOvr  = state.priceOverride !== null;
+  const hasAdj  = hasDisc || hasOvr;
+  if (hasAdj && state._baseTotal) t += `\n~~Precio calculado: ${fmtCur(state._baseTotal)}~~\n`;
+  if (hasDisc && disc.type === 'pct')   t += `🏷️ Descuento: ${disc.value}%\n`;
+  if (hasDisc && disc.type === 'fixed') t += `🏷️ Descuento: ${fmtCur(disc.value)}\n`;
+  if (hasOvr) t += `✏️ Precio ajustado manualmente\n`;
   t += `\n💰 *Total: ${fmtCur(state.total)}*`;
   return t;
 }
@@ -446,42 +453,58 @@ function buildSummary() {
 // ═══════════════════════════════════════════════════════════════
 //  WHATSAPP TEXT
 // ═══════════════════════════════════════════════════════════════
-const KIDS_MENU_NAMES  = { basic:'Menú básico', alt:'Menú alternativo' };
-const ADULT_MENU_NAMES = { none:'Traen su comida', pizza:'Solo pizzas',
-                           pizza_calzone:'Pizzas y calzones',
-                           pizza_calzone_chivito:'Pizzas, calzones y chivitos' };
+const KIDS_MENU_NAMES  = { basic:'Panchos y snacks', alt:'Nuggets con papas fritas' };
+const ADULT_MENU_NAMES = { none:'Sin menú', pizza:'Pizzas con gustos',
+                           pizza_calzone:'Pizzas + calzones',
+                           pizza_calzone_chivito:'Pizzas + calzones + chivitos' };
 
 function buildWhatsApp() {
-  const b = state._calc;
+  const b       = state._calc;
   const totalHrs = 4 + state.extraHours;
-  const dayLabel = isWeekend(state.date) ? 'Fin de semana' : 'Lunes–Jueves';
-  const menuK = KIDS_MENU_NAMES[state.kidsMenu   || 'basic'];
-  const menuA = ADULT_MENU_NAMES[state.adultsMenu || 'pizza'];
+  const menuK   = KIDS_MENU_NAMES[state.kidsMenu   || 'basic'];
+  const menuA   = ADULT_MENU_NAMES[state.adultsMenu || 'none'];
+  const disc    = state.discount || { type: 'none', value: 0 };
+  const hasDisc = disc.type !== 'none' && disc.value > 0;
 
-  let t = `🎉 *PRESUPUESTO SALÓN DE FIESTAS*\n`;
-  t    += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  if (state.clientName) t += `👤 *Cliente:* ${state.clientName}\n`;
-  t    += `📅 *Fecha:* ${fmtDate(state.date)}\n`;
-  t    += `👶 *Niños:* ${state.kids}  |  🧑 *Adultos:* ${state.adults}\n`;
-  t    += `⏱ *Duración:* ${totalHrs} hs\n\n`;
+  // ── Armar párrafo de servicios ──────────────────────────────
+  const partes = [];
+  partes.push(`menú para ${state.kids} niños, ${menuK}`);
+  if (state.adultsMenu && state.adultsMenu !== 'none')
+    partes.push(`menú para ${state.adults} adultos, ${menuA}`);
+  partes.push(`${totalHrs} hs`);
+  if (b.actualRecs > 0)
+    partes.push(`${b.actualRecs} animador${b.actualRecs > 1 ? 'es' : ''}`);
+  if (b.waiters > 0)
+    partes.push(`${b.waiters} mozo${b.waiters > 1 ? 's' : ''}`);
+  if (state.extraStaff > 0)
+    partes.push(`${state.extraStaff} personal adicional`);
+  partes.push('encargado de cocina');
+  partes.push('decoración básica del salón');
+  partes.push('vajilla');
+  partes.push('servilletas');
+  partes.push('tarjetas digitales');
 
-  t    += `📋 *DETALLE:*\n`;
-  t    += `🏠 Alquiler base (${dayLabel}): ${fmtCur(b.basePrice)}\n`;
-  if (b.kidsExtraCst > 0)  t += `👶 Niños extra (${b.kidsExtra} × ${fmtCur(b.kidsMenuPrc)}): ${fmtCur(b.kidsExtraCst)}\n`;
-  if (b.kidsUpgrade  > 0)  t += `🍽️ Upgrade menú niños: ${fmtCur(b.kidsUpgrade)}\n`;
-  if (b.adultMenuCst > 0)  t += `🍕 Menú adultos (${state.adults} × ${fmtCur(b.adultMenuPrc)}): ${fmtCur(b.adultMenuCst)}\n`;
-  if (b.recsCst      > 0)  t += `🎪 Recreadores extra (${b.recsExtra}): ${fmtCur(b.recsCst)}\n`;
-  if (b.waitersCst   > 0)  t += `🧑‍🍳 Mozos (${b.waiters}): ${fmtCur(b.waitersCst)}\n`;
-  if (b.xStaffCst    > 0)  t += `👤 Personal adicional (${state.extraStaff}): ${fmtCur(b.xStaffCst)}\n`;
-  if (b.extraHrTotCst> 0)  t += `⏱ Horas extra: ${fmtCur(b.extraHrTotCst)}\n`;
-  t    += `\n✅ *TOTAL: ${fmtCur(state.total)}*\n`;
-  t    += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  t    += `_Menú niños: ${menuK}_\n`;
-  t    += `_Menú adultos: ${menuA}_\n`;
-  if (state.comments) t += `_💬 ${state.comments}_\n`;
-  t    += `🎡 Toro mecánico o agujas + castillo inflable ¡sin costo! 🆓\n`;
-  t    += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  t    += `_Precios en pesos uruguayos ($UY)_`;
+  // Precio
+  let precioLinea = '';
+  if (hasDisc && state._baseTotal) {
+    const ahorroStr = fmtCur(state._baseTotal - state.total);
+    const discStr   = disc.type === 'pct'
+      ? `${disc.value}% de descuento (${ahorroStr} de ahorro)`
+      : `descuento de ${fmtCur(disc.value)}`;
+    precioLinea = `Te quedaría un presupuesto de ${fmtCur(state._baseTotal)} con un ${discStr}, quedando en *${fmtCur(state.total)}*`;
+  } else {
+    precioLinea = `Te quedaría un presupuesto de *${fmtCur(state.total)}*`;
+  }
+
+  // Unir todo en párrafo
+  const detalle = partes.slice(0, -1).join(', ') + ' y ' + partes[partes.length - 1];
+  let t = `${precioLinea}, ${detalle} y el toro mecánico o las agujas giratorias sin costo al igual que el castillo inflable.`;
+  if (state.comments || state.notes) {
+    t += '\n';
+    if (state.comments) t += `\n_${state.comments}_`;
+    if (state.notes)    t += `\n_${state.notes}_`;
+  }
+  t += '\n\nA las órdenes!! 🎉';
   return t;
 }
 
@@ -643,10 +666,15 @@ function buildReservaSummary() {
   if (state.extraStaff > 0) t += `👤 ${state.extraStaff} personal adicional\n`;
   if (state.comments) t += `💬 Descripción: ${state.comments}\n`;
   if (state.notes)    t += `📝 Nota: ${state.notes}\n`;
+  // Precio con ajustes
   const disc = state.discount || { type: 'none', value: 0 };
-  if (disc.type === 'pct'   && disc.value > 0) t += `🏷️ Descuento: ${disc.value}%\n`;
-  if (disc.type === 'fixed' && disc.value > 0) t += `🏷️ Descuento: ${fmtCur(disc.value)}\n`;
-  if (state.priceOverride !== null) t += `💰 Precio ajustado manualmente\n`;
+  const hasDisc = disc.type !== 'none' && disc.value > 0;
+  const hasOvr  = state.priceOverride !== null;
+  const hasAdj  = hasDisc || hasOvr;
+  if (hasAdj && state._baseTotal) t += `\n~~Precio calculado: ${fmtCur(state._baseTotal)}~~\n`;
+  if (hasDisc && disc.type === 'pct')   t += `🏷️ Descuento: ${disc.value}%\n`;
+  if (hasDisc && disc.type === 'fixed') t += `🏷️ Descuento: ${fmtCur(disc.value)}\n`;
+  if (hasOvr) t += `✏️ Precio ajustado manualmente\n`;
   t += `\n💰 *Total: ${fmtCur(state.total)}*`;
   return t;
 }
@@ -888,10 +916,11 @@ async function handleMissing() {
       botMsg(
         `Perfecto, el *${fmtDate(state.date)}* es ${dn}.\n¿Con qué menú?`,
         [
-          { label: '🍕 Básico + Pizzas',   val: 'menu basico ninos y pizzas adultos' },
-          { label: '🥙 Básico + Completo', val: 'menu basico ninos y completo adultos' },
-          { label: '⭐ Alt + Pizzas',       val: 'menu alternativo ninos y pizzas adultos' },
-          { label: '🚫 Adultos sin menú',  val: 'menu basico ninos traen comida adultos' },
+          { label: '🌭 Panchos + Pizzas',       val: 'menu basico ninos y pizzas adultos'    },
+          { label: '🌭 Panchos + Pizzas&Calz',  val: 'menu basico ninos y calzon adultos'    },
+          { label: '🍗 Nuggets + Pizzas',        val: 'menu alternativo ninos y pizzas adultos' },
+          { label: '🍗 Nuggets + Pizzas&Calz',   val: 'menu alternativo ninos y calzon adultos' },
+          { label: '🚫 Adultos sin menú',        val: 'menu basico ninos traen comida adultos'  },
         ]
       );
       break;
@@ -1065,10 +1094,11 @@ function processMessage(raw) {
       if (wf === 'edit_menu') {
         state._waitingFor = 'edit_menu_reserva';
         botMsg('¿Con qué menú?', [
-          { label: '🍕 Básico + Pizzas',   val: 'menu basico ninos y pizzas adultos' },
-          { label: '🥙 Básico + Completo', val: 'menu basico ninos y completo adultos' },
-          { label: '⭐ Alt + Pizzas',       val: 'menu alternativo ninos y pizzas adultos' },
-          { label: '🚫 Adultos sin menú',  val: 'menu basico ninos traen comida adultos' },
+          { label: '🌭 Panchos + Pizzas',      val: 'menu basico ninos y pizzas adultos'     },
+          { label: '🌭 Panchos + Pizzas&Calz', val: 'menu basico ninos y calzon adultos'     },
+          { label: '🍗 Nuggets + Pizzas',       val: 'menu alternativo ninos y pizzas adultos' },
+          { label: '🍗 Nuggets + Pizzas&Calz',  val: 'menu alternativo ninos y calzon adultos' },
+          { label: '🚫 Adultos sin menú',       val: 'menu basico ninos traen comida adultos'  },
         ]);
       } else {
         state._waitingFor = wf;
@@ -1238,10 +1268,11 @@ function processMessage(raw) {
       if (wf === 'edit_menu') {
         state._waitingFor = 'edit_menu';
         botMsg('¿Con qué menú?', [
-          { label: '🍕 Básico + Pizzas',   val: 'menu basico ninos y pizzas adultos' },
-          { label: '🥙 Básico + Completo', val: 'menu basico ninos y completo adultos' },
-          { label: '⭐ Alt + Pizzas',       val: 'menu alternativo ninos y pizzas adultos' },
-          { label: '🚫 Adultos sin menú',  val: 'menu basico ninos traen comida adultos' },
+          { label: '🌭 Panchos + Pizzas',      val: 'menu basico ninos y pizzas adultos'     },
+          { label: '🌭 Panchos + Pizzas&Calz', val: 'menu basico ninos y calzon adultos'     },
+          { label: '🍗 Nuggets + Pizzas',       val: 'menu alternativo ninos y pizzas adultos' },
+          { label: '🍗 Nuggets + Pizzas&Calz',  val: 'menu alternativo ninos y calzon adultos' },
+          { label: '🚫 Adultos sin menú',       val: 'menu basico ninos traen comida adultos'  },
         ]);
       } else if (wf === 'edit_staff') {
         botMsg(prompt); state._waitingFor = 'staff';
