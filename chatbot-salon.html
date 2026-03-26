@@ -185,13 +185,15 @@
 // ═══════════════════════════════════════════════════════════════
 //  CONFIG — comparte localStorage con presupuesto-salon.html
 // ═══════════════════════════════════════════════════════════════
+const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbxwn2hPDk6ZiBN5qrJ7rNjHIWi3UkmZkcvJDLtbQwjAWyIpbPLuoqWGrnu2xz0_wDjQhQ/exec';
+
 const DEFAULTS = {
   baseWeekday: 20000, baseWeekend: 22000, extraHour: 5000,
   kidsIncluded: 20,   kidsBasic: 200,     kidsAlt: 300,
   adultsIncluded: 10, menuPizza: 300,     menuPizzaCalzone: 350, menuFull: 400,
   recIncluded: 2,     kidsPerRec: 10,     adultsPerWaiter: 20,
   staffCost: 2000,    staffExtraHr: 250,
-  webhookUrl: 'https://script.google.com/macros/s/AKfycbxwn2hPDk6ZiBN5qrJ7rNjHIWi3UkmZkcvJDLtbQwjAWyIpbPLuoqWGrnu2xz0_wDjQhQ/exec'
+  webhookUrl: WEBHOOK_URL
 };
 const cfg = () => {
   try {
@@ -467,7 +469,7 @@ function buildWhatsApp() {
 //  GUARDAR EN SHEET
 // ═══════════════════════════════════════════════════════════════
 function saveToSheet() {
-  const url = cfg().webhookUrl;
+  const url = cfg().webhookUrl || WEBHOOK_URL;
   if (!url || !url.startsWith('http')) return false;
 
   const id      = 'bot-' + Date.now();
@@ -533,7 +535,7 @@ function parseTime(raw) {
 }
 
 function saveReserva() {
-  const url      = cfg().webhookUrl;
+  const url      = cfg().webhookUrl || WEBHOOK_URL;
   if (!url || !url.startsWith('http')) return false;
   const totalHrs = 4 + state.extraHours;
   const endTime  = calcEndTime(state.startTime, totalHrs);
@@ -565,12 +567,24 @@ function saveReserva() {
     'Guardado el':     new Date().toISOString()
   };
 
-  // Guardar en sheet
+  // Guardar reserva en sheet
   fetch(url, {
     method:  'POST',
     headers: { 'Content-Type': 'text/plain' },
     body:    JSON.stringify(payload)
   }).catch(() => {});
+
+  // Marcar el presupuesto original como convertido (sacarlo de la tab presupuestos)
+  if (state._selectedPresId) {
+    fetch(url, {
+      method:  'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body:    JSON.stringify({
+        _action:  'markAsReserva',
+        ID:       state._selectedPresId
+      })
+    }).catch(() => {});
+  }
 
   // Guardar en localStorage (compatible con presupuesto-salon.html)
   try {
@@ -617,7 +631,7 @@ function buildReservaSummary() {
 // ═══════════════════════════════════════════════════════════════
 async function startReservaFlow() {
   state.step = 'reserva_select';
-  const url = cfg().webhookUrl;
+  const url = cfg().webhookUrl || WEBHOOK_URL;
   if (!url || !url.startsWith('http')) {
     botMsg('No hay webhook configurado. Configuralo en presupuesto-salon.html → Admin.');
     state.step = 'done'; return;
