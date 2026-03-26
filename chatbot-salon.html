@@ -535,10 +535,15 @@ function menuQuickReplies() {
 // ═══════════════════════════════════════════════════════════════
 //  WHATSAPP TEXT
 // ═══════════════════════════════════════════════════════════════
-const KIDS_MENU_NAMES  = { basic:'🌭 Panchos y snacks', alt:'🍗 Nuggets con papas fritas' };
-const ADULT_MENU_NAMES = { none:'Sin menú', pizza:'🍕 Pizzas con gustos',
-                           pizza_calzone:'🍕 Pizzas + calzones',
-                           pizza_calzone_chivito:'🍕 Pizzas + calzones + chivitos' };
+const KIDS_MENU_NAMES   = { basic:'🌭 Panchos y snacks', alt:'🍗 Nuggets con papas fritas' };
+const ADULT_MENU_NAMES  = { none:'Sin menú', pizza:'🍕 Pizzas con gustos',
+                            pizza_calzone:'🍕 Pizzas + calzones',
+                            pizza_calzone_chivito:'🍕 Pizzas + calzones + chivitos' };
+// Para el sheet: sin emojis
+const KIDS_MENU_SHEET   = { basic:'Panchos y snacks', alt:'Nuggets con papas fritas' };
+const ADULT_MENU_SHEET  = { none:'Sin menú', pizza:'Pizzas con gustos',
+                            pizza_calzone:'Pizzas + calzones',
+                            pizza_calzone_chivito:'Pizzas + calzones + chivitos' };
 
 function buildWhatsApp() {
   const b        = state._calc;
@@ -605,11 +610,14 @@ function saveToSheet() {
     'Duración (hs)':   totalHrs,
     'Tipo de día':     dayType === 'weekday' ? 'Lunes–Jueves' : 'Vie/Sáb/Dom/Fer',
     'Nº niños':        state.kids,
-    'Menú niños':      state.kidsMenu === 'alt' ? 'Alternativo' : 'Básico',
+    'Menú niños':      KIDS_MENU_SHEET[state.kidsMenu || 'basic'],
     'Nº adultos':      state.adults,
-    'Menú adultos':    ADULT_MENU_NAMES[state.adultsMenu || 'pizza'],
+    'Menú adultos':    ADULT_MENU_SHEET[state.adultsMenu || 'pizza'],
     'Horas extra':     state.extraHours,
     'Personal extra':  state.extraStaff,
+    'Nº animadores':   state._calc?.actualRecs  ?? '',
+    'Nº mozos':        state._calc?.waiters     ?? '',
+    'Precio base ($)': state._calc?.basePrice   ?? '',
     'Total ($)':       state.total,
     'Descuento valor': (state.discount?.value || ''),
     'Descuento tipo':  (state.discount?.type === 'pct' ? '%' : state.discount?.type === 'fixed' ? '$' : ''),
@@ -671,11 +679,14 @@ function saveReserva() {
     'Duración (hs)':   totalHrs,
     'Tipo de día':     dayType === 'weekday' ? 'Lunes–Jueves' : 'Vie/Sáb/Dom/Fer',
     'Nº niños':        state.kids,
-    'Menú niños':      state.kidsMenu === 'alt' ? 'Alternativo' : 'Básico',
+    'Menú niños':      KIDS_MENU_SHEET[state.kidsMenu || 'basic'],
     'Nº adultos':      state.adults,
-    'Menú adultos':    ADULT_MENU_NAMES[state.adultsMenu || 'none'],
+    'Menú adultos':    ADULT_MENU_SHEET[state.adultsMenu || 'none'],
     'Horas extra':     state.extraHours,
     'Personal extra':  state.extraStaff,
+    'Nº animadores':   state._calc?.actualRecs  ?? '',
+    'Nº mozos':        state._calc?.waiters     ?? '',
+    'Precio base ($)': state._calc?.basePrice   ?? '',
     'Total ($)':       state.total,
     'Descuento valor': (state.discount?.value || ''),
     'Descuento tipo':  (state.discount?.type === 'pct' ? '%' : state.discount?.type === 'fixed' ? '$' : ''),
@@ -1161,7 +1172,7 @@ function processMessage(raw) {
   }
 
   // ── Estado: reserva_editing_menu (maneja cada campo) ─────
-  if (state.step === 'reserva_editing_menu') {
+  if (state.step === 'reserva_editing_menu' && !state._waitingFor) {
     const editMap = {
       '__re_eventname__': ['eventName',       'Ingresá el nuevo nombre del evento:'],
       '__re_starttime__': ['edit_starttime', '¿Nueva hora de inicio? (Ej: 18:00)'],
