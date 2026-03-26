@@ -459,52 +459,48 @@ const ADULT_MENU_NAMES = { none:'Sin menú', pizza:'Pizzas con gustos',
                            pizza_calzone_chivito:'Pizzas + calzones + chivitos' };
 
 function buildWhatsApp() {
-  const b       = state._calc;
+  const b        = state._calc;
   const totalHrs = 4 + state.extraHours;
-  const menuK   = KIDS_MENU_NAMES[state.kidsMenu   || 'basic'];
-  const menuA   = ADULT_MENU_NAMES[state.adultsMenu || 'none'];
-  const disc    = state.discount || { type: 'none', value: 0 };
-  const hasDisc = disc.type !== 'none' && disc.value > 0;
+  const menuK    = KIDS_MENU_NAMES[state.kidsMenu   || 'basic'];
+  const menuA    = ADULT_MENU_NAMES[state.adultsMenu || 'none'];
+  const disc     = state.discount || { type: 'none', value: 0 };
+  const hasDisc  = disc.type !== 'none' && disc.value > 0;
 
-  // ── Armar párrafo de servicios ──────────────────────────────
-  const partes = [];
-  partes.push(`menú para ${state.kids} niños, ${menuK}`);
-  if (state.adultsMenu && state.adultsMenu !== 'none')
-    partes.push(`menú para ${state.adults} adultos, ${menuA}`);
-  partes.push(`${totalHrs} hs`);
-  if (b.actualRecs > 0)
-    partes.push(`${b.actualRecs} animador${b.actualRecs > 1 ? 'es' : ''}`);
-  if (b.waiters > 0)
-    partes.push(`${b.waiters} mozo${b.waiters > 1 ? 's' : ''}`);
-  if (state.extraStaff > 0)
-    partes.push(`${state.extraStaff} personal adicional`);
-  partes.push('encargado de cocina');
-  partes.push('decoración básica del salón');
-  partes.push('vajilla');
-  partes.push('servilletas');
-  partes.push('tarjetas digitales');
-
-  // Precio
-  let precioLinea = '';
+  // ── Línea de precio ─────────────────────────────────────────
+  let t;
   if (hasDisc && state._baseTotal) {
-    const ahorroStr = fmtCur(state._baseTotal - state.total);
-    const discStr   = disc.type === 'pct'
-      ? `${disc.value}% de descuento (${ahorroStr} de ahorro)`
+    const discStr = disc.type === 'pct'
+      ? `${disc.value}% de descuento`
       : `descuento de ${fmtCur(disc.value)}`;
-    precioLinea = `Te quedaría un presupuesto de ${fmtCur(state._baseTotal)} con un ${discStr}, quedando en *${fmtCur(state.total)}*`;
+    t = `🎉 ¡Te quedaría un presupuesto de ~${fmtCur(state._baseTotal)}~, con un ${discStr}: *${fmtCur(state.total)}*!\n`;
   } else {
-    precioLinea = `Te quedaría un presupuesto de *${fmtCur(state.total)}*`;
+    t = `🎉 ¡Te quedaría un presupuesto de *${fmtCur(state.total)}*!\n`;
   }
 
-  // Unir todo en párrafo
-  const detalle = partes.slice(0, -1).join(', ') + ' y ' + partes[partes.length - 1];
-  let t = `${precioLinea}, ${detalle} y el toro mecánico o las agujas giratorias sin costo al igual que el castillo inflable.`;
-  if (state.comments || state.notes) {
-    t += '\n';
-    if (state.comments) t += `\n_${state.comments}_`;
-    if (state.notes)    t += `\n_${state.notes}_`;
-  }
-  t += '\n\nA las órdenes!! 🎉';
+  // ── Menús ────────────────────────────────────────────────────
+  t += `👶 Menú para ${state.kids} niños — ${menuK}\n`;
+  if (state.adultsMenu && state.adultsMenu !== 'none')
+    t += `🍽️ Menú para ${state.adults} adultos — ${menuA}\n`;
+
+  // ── Duración (solo si hay horas extra) ───────────────────────
+  if (state.extraHours > 0) t += `⏱ Evento de ${totalHrs} hs\n`;
+
+  // ── Staff ────────────────────────────────────────────────────
+  const staffPartes = [];
+  if (b.actualRecs   > 0) staffPartes.push(`🎪 ${b.actualRecs} animador${b.actualRecs > 1 ? 'es' : ''}`);
+  if (b.waiters      > 0) staffPartes.push(`🧑‍🍳 ${b.waiters} mozo${b.waiters > 1 ? 's' : ''}`);
+  if (state.extraStaff>0) staffPartes.push(`👤 ${state.extraStaff} personal adicional`);
+  if (staffPartes.length) t += staffPartes.join(' · ') + '\n';
+
+  // ── Incluido fijo ────────────────────────────────────────────
+  t += `✨ Incluye encargado de cocina, decoración básica del salón, vajilla, servilletas y tarjetas digitales 🎊\n`;
+  t += `🎡 Toro mecánico o agujas giratorias y castillo inflable ¡sin costo! 🆓`;
+
+  // ── Descripción / notas ──────────────────────────────────────
+  if (state.comments) t += `\n_${state.comments}_`;
+  if (state.notes)    t += `\n_${state.notes}_`;
+
+  t += '\n¡A las órdenes! 🙌';
   return t;
 }
 
