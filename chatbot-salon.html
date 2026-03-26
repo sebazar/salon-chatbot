@@ -183,28 +183,35 @@
 
 <script>
 // ═══════════════════════════════════════════════════════════════
-//  CONFIG — comparte localStorage con presupuesto-salon.html
+//  CONFIG — cargada desde config.json en GitHub Pages
 // ═══════════════════════════════════════════════════════════════
 const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbxwn2hPDk6ZiBN5qrJ7rNjHIWi3UkmZkcvJDLtbQwjAWyIpbPLuoqWGrnu2xz0_wDjQhQ/exec';
+const CONFIG_URL  = 'https://sebazar.github.io/salon-chatbot/config.json';
 
 const DEFAULTS = {
-  baseWeekday: 20000, baseWeekend: 22000, extraHour: 5000,
-  kidsIncluded: 20,   kidsBasic: 200,     kidsAlt: 300,
-  adultsIncluded: 10, menuPizza: 300,     menuPizzaCalzone: 350, menuFull: 400,
-  recIncluded: 2,     kidsPerRec: 10,     adultsPerWaiter: 20,
-  staffCost: 2000,    staffExtraHr: 250,
+  baseWeekday: 18500,  baseWeekend: 20900,  extraHour: 4900,
+  kidsIncluded: 20,    kidsBasic: 220,       kidsAlt: 350,
+  kidsUpgradeFlat: 2600,
+  adultsSmallThreshold: 20, adultsFreeMenuThreshold: 10,
+  menuPizzaSmall: 450,
+  menuPizza: 350,      menuPizzaCalzone: 450, menuFull: 500,
+  recIncluded: 2,      kidsPerRec: 10,        adultsPerWaiter: 20,
+  staffCost: 1900,     staffExtraHr: 450,
   webhookUrl: WEBHOOK_URL
 };
-const cfg = () => {
+
+let _cfg = { ...DEFAULTS };
+async function initConfig() {
   try {
-    const s = localStorage.getItem('salonCfg');
-    if (!s) return { ...DEFAULTS };
-    const stored = JSON.parse(s);
-    // Si el webhookUrl guardado está vacío, usar el de DEFAULTS
-    if (!stored.webhookUrl) delete stored.webhookUrl;
-    return { ...DEFAULTS, ...stored };
-  } catch { return { ...DEFAULTS }; }
-};
+    const r = await fetch(CONFIG_URL + '?_=' + Date.now());
+    if (r.ok) {
+      const remote = await r.json();
+      if (!remote.webhookUrl) delete remote.webhookUrl;
+      _cfg = { ...DEFAULTS, ...remote };
+    }
+  } catch(e) { console.warn('Config: usando defaults.', e); }
+}
+const cfg = () => _cfg;
 const fmtCur = n => '$\u202f' + Math.round(n).toLocaleString('es-UY');
 
 // ═══════════════════════════════════════════════════════════════
@@ -352,10 +359,16 @@ function extractFromText(raw) {
   else if (/basic|comida\s+nino|menu\s+nino/.test(t)) state.kidsMenu = 'basic';
 
   // Menú adultos
-  if (/chivito|completo|full\b|todo/.test(t))       state.adultsMenu = 'pizza_calzone_chivito';
+  if (/chivito|completo|full\b/.test(t))            state.adultsMenu = 'pizza_calzone_chivito';
   else if (/calzon/.test(t))                         state.adultsMenu = 'pizza_calzone';
   else if (/pizza|piza/.test(t))                     state.adultsMenu = 'pizza';
   else if (/traen|sin men|no comen|propio/.test(t))  state.adultsMenu = 'none';
+  // Forzar a pizza si el grupo es pequeño y se eligió una opción no disponible
+  if (state.adultsMenu && state.adultsMenu !== 'none' && state.adults !== null) {
+    const _C = cfg();
+    const _thr = _C.adultsSmallThreshold || 20;
+    if (state.adults < _thr && state.adultsMenu !== 'pizza') state.adultsMenu = 'pizza';
+  }
 
   // Nombre del cliente
   const nameM = raw.match(
@@ -368,50 +381,60 @@ function extractFromText(raw) {
 //  CÁLCULO  (misma lógica que presupuesto-salon.html)
 // ═══════════════════════════════════════════════════════════════
 function calculate() {
-  const C = cfg();
-  const km = state.kidsMenu  || 'basic';
-  const am = state.adultsMenu || 'none';
+  const C       = cfg();
+  const km      = state.kidsMenu   || 'basic';
+  const am      = state.adultsMenu || 'none';
+  const smallThr = C.adultsSmallThreshold    || 20;
+  const freeThr  = C.adultsFreeMenuThreshold || 10;
 
   const basePrice = isWeekend(state.date) ? C.baseWeekend : C.baseWeekday;
 
-  // Staff (igual lógica que presupuesto-salon.html)
-  const recsNeeded    = state.kids   > 0 ? Math.ceil(state.kids   / C.kidsPerRec)      : 0;
-  // Mozos solo si hay menú de adultos (o se agregaron como extra)
-  const waiters       = (state.adults > 0 && am !== 'none') ? Math.ceil(state.adults / C.adultsPerWaiter) : 0;
-  const actualRecs    = state.kids   > 0 ? Math.max(recsNeeded, C.recIncluded)         : 0;
-  const totalStaff    = actualRecs + waiters + state.extraStaff;
-
-  const salonExtraCst = state.extraHours * C.extraHour;
-  const extraHrTotCst = salonExtraCst + totalStaff * state.extraHours * C.staffExtraHr;
-
+  // ── Kids ──────────────────────────────────────────────────
   const kidsIncl     = Math.min(state.kids, C.kidsIncluded);
   const kidsExtra    = Math.max(0, state.kids - C.kidsIncluded);
   const kidsMenuPrc  = km === 'basic' ? C.kidsBasic : C.kidsAlt;
   const kidsExtraCst = kidsExtra * kidsMenuPrc;
-  const kidsUpgrade  = km === 'alt' ? kidsIncl * (C.kidsAlt - C.kidsBasic) : 0;
+  const kidsUpgrade  = km === 'alt' ? (C.kidsUpgradeFlat || 0) : 0;
 
-  const adultPrices  = { none:0, pizza:C.menuPizza, pizza_calzone:C.menuPizzaCalzone, pizza_calzone_chivito:C.menuFull };
-  const adultMenuPrc = adultPrices[am] || 0;
+  // ── Adults ────────────────────────────────────────────────
+  let adultMenuPrc = 0;
+  if (am !== 'none') {
+    if (state.adults < smallThr) {
+      adultMenuPrc = C.menuPizzaSmall;                        // 1–19: solo pizza $450
+    } else {
+      const prices = { pizza: C.menuPizza, pizza_calzone: C.menuPizzaCalzone, pizza_calzone_chivito: C.menuFull };
+      adultMenuPrc = prices[am] || C.menuPizza;               // 20+: 3 opciones
+    }
+  }
   const adultMenuCst = state.adults * adultMenuPrc;
 
+  // ── Staff ─────────────────────────────────────────────────
+  const recsNeeded = state.kids > 0 ? Math.ceil(state.kids / C.kidsPerRec) : 0;
+  const actualRecs = state.kids > 0 ? Math.max(recsNeeded, C.recIncluded)  : 0;
+  // Mozo obligatorio desde freeThr adultos con menú
+  const waiters    = (state.adults >= freeThr && am !== 'none')
+                       ? Math.ceil(state.adults / C.adultsPerWaiter) : 0;
+  const totalStaff = actualRecs + waiters + state.extraStaff;
+
+  const salonExtraCst = state.extraHours * C.extraHour;
+  const extraHrTotCst = salonExtraCst + totalStaff * state.extraHours * C.staffExtraHr;
+
   const recsExtra  = Math.max(0, recsNeeded - C.recIncluded);
-  const recsCst    = recsExtra * C.staffCost;
-  const waitersCst = waiters   * C.staffCost;
+  const recsCst    = recsExtra  * C.staffCost;
+  const waitersCst = waiters    * C.staffCost;
   const xStaffCst  = state.extraStaff * C.staffCost;
 
   const total = basePrice + extraHrTotCst + kidsExtraCst + kidsUpgrade + adultMenuCst + recsCst + waitersCst + xStaffCst;
-  let baseTotal = Math.round(total / 100) * 100;
+  let baseTotal  = Math.round(total / 100) * 100;
   let finalTotal = baseTotal;
-  // Aplicar descuento
   const disc = state.discount || { type: 'none', value: 0 };
   if (disc.type === 'pct'   && disc.value > 0) finalTotal = Math.round(finalTotal * (1 - disc.value / 100) / 100) * 100;
   if (disc.type === 'fixed' && disc.value > 0) finalTotal = Math.max(0, finalTotal - disc.value);
-  // Precio manual (sobreescribe todo)
   if (state.priceOverride !== null) finalTotal = state.priceOverride;
-  state._baseTotal = baseTotal;   // precio calculado antes de ajustes
-  state.total = finalTotal;
+  state._baseTotal = baseTotal;
+  state.total      = finalTotal;
   state._calc = {
-    C, basePrice, km, am, kidsMenuPrc, adultMenuPrc,
+    C, basePrice, km, am, kidsMenuPrc, adultMenuPrc, smallThr, freeThr,
     kidsExtraCst, kidsUpgrade, adultMenuCst,
     recsCst, waitersCst, xStaffCst, extraHrTotCst, salonExtraCst,
     kidsIncl, kidsExtra, recsNeeded, recsExtra, waiters, actualRecs
@@ -448,6 +471,38 @@ function buildSummary() {
   if (hasOvr) t += `✏️ Precio ajustado manualmente\n`;
   t += `\n💰 *Total: ${fmtCur(state.total)}*`;
   return t;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MENU QUICK REPLIES (dinámico según cantidad de adultos)
+// ═══════════════════════════════════════════════════════════════
+function menuQuickReplies() {
+  const C        = cfg();
+  const adults   = state.adults || 0;
+  const smallThr = C.adultsSmallThreshold    || 20;
+  const freeThr  = C.adultsFreeMenuThreshold || 10;
+  const opts     = [];
+
+  if (adults < freeThr) {
+    // 1–9 adultos: sin menú + solo pizza ($450)
+    opts.push({ label: '🌭 Panchos (adultos traen comida)',  val: 'menu basico ninos traen comida adultos'      });
+    opts.push({ label: '🌭 Panchos + Pizzas',               val: 'menu basico ninos y pizzas adultos'          });
+    opts.push({ label: '🍗 Nuggets (adultos traen comida)', val: 'menu alternativo ninos traen comida adultos' });
+    opts.push({ label: '🍗 Nuggets + Pizzas',               val: 'menu alternativo ninos y pizzas adultos'     });
+  } else if (adults < smallThr) {
+    // 10–19 adultos: solo pizza (obligatorio)
+    opts.push({ label: '🌭 Panchos + Pizzas', val: 'menu basico ninos y pizzas adultos'      });
+    opts.push({ label: '🍗 Nuggets + Pizzas', val: 'menu alternativo ninos y pizzas adultos' });
+  } else {
+    // 20+ adultos: 3 opciones
+    opts.push({ label: '🌭 Panchos + Pizzas',              val: 'menu basico ninos y pizzas adultos'            });
+    opts.push({ label: '🌭 Panchos + Pizzas&Calz',         val: 'menu basico ninos y calzon adultos'            });
+    opts.push({ label: '🌭 Panchos + Pizzas+Chivitos',     val: 'menu basico ninos y chivito adultos'           });
+    opts.push({ label: '🍗 Nuggets + Pizzas',              val: 'menu alternativo ninos y pizzas adultos'       });
+    opts.push({ label: '🍗 Nuggets + Pizzas&Calz',         val: 'menu alternativo ninos y calzon adultos'       });
+    opts.push({ label: '🍗 Nuggets + Pizzas+Chivitos',     val: 'menu alternativo ninos y chivito adultos'      });
+  }
+  return opts;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -903,18 +958,8 @@ async function handleMissing() {
 
     case 'ask_menus': {
       const dn = isWeekend(state.date) ? 'fin de semana 🎉' : 'día de semana';
-      // Aviso asincrónico si ya hay reservas ese día (no bloquea el flujo)
       warnReservasForDate(state.date);
-      botMsg(
-        `Perfecto, el *${fmtDate(state.date)}* es ${dn}.\n¿Con qué menú?`,
-        [
-          { label: '🌭 Panchos + Pizzas',       val: 'menu basico ninos y pizzas adultos'    },
-          { label: '🌭 Panchos + Pizzas&Calz',  val: 'menu basico ninos y calzon adultos'    },
-          { label: '🍗 Nuggets + Pizzas',        val: 'menu alternativo ninos y pizzas adultos' },
-          { label: '🍗 Nuggets + Pizzas&Calz',   val: 'menu alternativo ninos y calzon adultos' },
-          { label: '🚫 Adultos sin menú',        val: 'menu basico ninos traen comida adultos'  },
-        ]
-      );
+      botMsg(`Perfecto, el *${fmtDate(state.date)}* es ${dn}.\n¿Con qué menú?`, menuQuickReplies());
       break;
     }
 
@@ -1085,13 +1130,7 @@ function processMessage(raw) {
       const [wf, prompt] = editMap[raw];
       if (wf === 'edit_menu') {
         state._waitingFor = 'edit_menu_reserva';
-        botMsg('¿Con qué menú?', [
-          { label: '🌭 Panchos + Pizzas',      val: 'menu basico ninos y pizzas adultos'     },
-          { label: '🌭 Panchos + Pizzas&Calz', val: 'menu basico ninos y calzon adultos'     },
-          { label: '🍗 Nuggets + Pizzas',       val: 'menu alternativo ninos y pizzas adultos' },
-          { label: '🍗 Nuggets + Pizzas&Calz',  val: 'menu alternativo ninos y calzon adultos' },
-          { label: '🚫 Adultos sin menú',       val: 'menu basico ninos traen comida adultos'  },
-        ]);
+        botMsg('¿Con qué menú?', menuQuickReplies());
       } else {
         state._waitingFor = wf;
         botMsg(prompt);
@@ -1259,13 +1298,7 @@ function processMessage(raw) {
       const [wf, prompt] = edMap[raw];
       if (wf === 'edit_menu') {
         state._waitingFor = 'edit_menu';
-        botMsg('¿Con qué menú?', [
-          { label: '🌭 Panchos + Pizzas',      val: 'menu basico ninos y pizzas adultos'     },
-          { label: '🌭 Panchos + Pizzas&Calz', val: 'menu basico ninos y calzon adultos'     },
-          { label: '🍗 Nuggets + Pizzas',       val: 'menu alternativo ninos y pizzas adultos' },
-          { label: '🍗 Nuggets + Pizzas&Calz',  val: 'menu alternativo ninos y calzon adultos' },
-          { label: '🚫 Adultos sin menú',       val: 'menu basico ninos traen comida adultos'  },
-        ]);
+        botMsg('¿Con qué menú?', menuQuickReplies());
       } else if (wf === 'edit_staff') {
         botMsg(prompt); state._waitingFor = 'staff';
       } else {
@@ -1516,7 +1549,7 @@ function greeting() {
 
 // ── Init ─────────────────────────────────────────────────────
 resetState();
-greeting();
+initConfig().then(() => greeting());
 </script>
 </body>
 </html>
