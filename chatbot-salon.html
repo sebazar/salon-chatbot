@@ -453,10 +453,10 @@ function buildSummary() {
 // ═══════════════════════════════════════════════════════════════
 //  WHATSAPP TEXT
 // ═══════════════════════════════════════════════════════════════
-const KIDS_MENU_NAMES  = { basic:'Panchos y snacks', alt:'Nuggets con papas fritas' };
-const ADULT_MENU_NAMES = { none:'Sin menú', pizza:'Pizzas con gustos',
-                           pizza_calzone:'Pizzas + calzones',
-                           pizza_calzone_chivito:'Pizzas + calzones + chivitos' };
+const KIDS_MENU_NAMES  = { basic:'🌭 Panchos y snacks', alt:'🍗 Nuggets con papas fritas' };
+const ADULT_MENU_NAMES = { none:'Sin menú', pizza:'🍕 Pizzas con gustos',
+                           pizza_calzone:'🍕 Pizzas + calzones',
+                           pizza_calzone_chivito:'🍕 Pizzas + calzones + chivitos' };
 
 function buildWhatsApp() {
   const b        = state._calc;
@@ -495,10 +495,6 @@ function buildWhatsApp() {
   // ── Incluido fijo ────────────────────────────────────────────
   t += `✨ Incluye encargado de cocina, decoración básica del salón, vajilla, servilletas y tarjetas digitales 🎊\n`;
   t += `🎡 Toro mecánico o agujas giratorias y castillo inflable ¡sin costo! 🆓`;
-
-  // ── Descripción / notas ──────────────────────────────────────
-  if (state.comments) t += `\n_${state.comments}_`;
-  if (state.notes)    t += `\n_${state.notes}_`;
 
   t += '\n¡A las órdenes! 🙌';
   return t;
