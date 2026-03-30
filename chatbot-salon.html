@@ -1053,6 +1053,17 @@ async function handleMissing() {
 function processMessage(raw) {
   if (raw === '__reset__') { resetChat(); return; }
 
+  // ── Comando "form" → abre el formulario en la app padre ──
+  if (/^\s*form\s*$/i.test(raw)) {
+    addMsg('bot', '📋 Abriendo el formulario...');
+    setTimeout(() => {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ action: 'openForm' }, '*');
+      }
+    }, 600);
+    return;
+  }
+
   const t = norm(raw);
 
   // ── Trigger reserva ───────────────────────────────────────
