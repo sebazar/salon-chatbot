@@ -18,5 +18,7 @@
   "staffCost": 1900,
   "staffExtraHr": 450,
   "webhookUrl": "https://script.google.com/macros/s/AKfycbxwn2hPDk6ZiBN5qrJ7rNjHIWi3UkmZkcvJDLtbQwjAWyIpbPLuoqWGrnu2xz0_wDjQhQ/exec",
-  "adminPassword": "salon2024"
+  "adminPassword": "salon2024",
+  "googleClientId": "907185285963-qbppbhdne0bg9pso6un6a8a4ls9knhea.apps.googleusercontent.com",
+  "chatbotUrl": "https://sebazar.github.io/salon-chatbot/chatbot-salon.html"
 }
