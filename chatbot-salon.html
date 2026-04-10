@@ -234,6 +234,10 @@ function resetState() {
     discount: { type: 'none', value: 0 },
     // Campos extra
     notes: '',
+    // Nuevos campos (reserva y presupuesto)
+    edad: null,           // edad del cumpleañero/a (null = no preguntado aún)
+    sena: null,           // seña en $ (null = no preguntado aún)
+    roman: null,          // 'Recreador' | 'Salon' | 'No va' (null = no preguntado)
     // Reserva
     eventName: null, startTime: null,
     _selectedPresId: null, _presCache: [],
@@ -378,12 +382,23 @@ function extractFromText(raw) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  RECREADORES – escala escalonada (≤22→2 · 23-32→3 · 33-40→4 · 41+→1c/10)
+// ═══════════════════════════════════════════════════════════════
+function calcRecs(n) {
+  if (n <= 0)  return 0;
+  if (n <= 22) return 2;
+  if (n <= 32) return 3;
+  if (n <= 40) return 4;
+  return Math.ceil(n / 10);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  CÁLCULO  (misma lógica que presupuesto-salon.html)
 // ═══════════════════════════════════════════════════════════════
 function calculate() {
   const C       = cfg();
   const km      = state.kidsMenu   || 'basic';
-  const am      = state.adultsMenu || 'none';
+  const am      = state.adultsMenu || 'pizza';
   const smallThr = C.adultsSmallThreshold    || 20;
   const freeThr  = C.adultsFreeMenuThreshold || 10;
 
@@ -409,22 +424,21 @@ function calculate() {
   const adultMenuCst = state.adults * adultMenuPrc;
 
   // ── Staff ─────────────────────────────────────────────────
-  const recsNeeded = state.kids > 0 ? Math.ceil(state.kids / C.kidsPerRec) : 0;
-  const actualRecs = state.kids > 0 ? Math.max(recsNeeded, C.recIncluded)  : 0;
+  const actualRecs = calcRecs(state.kids);
   // Mozo obligatorio desde freeThr adultos con menú
   // El primer mozo está incluido cuando hay hasta smallThr adultos
   const waiters    = (state.adults >= freeThr && am !== 'none')
                        ? Math.ceil(state.adults / C.adultsPerWaiter) : 0;
-  const totalStaff = actualRecs + waiters + state.extraStaff;
+  const totalStaff = actualRecs + waiters + (state.extraStaff || 0);
 
   const salonExtraCst = state.extraHours * C.extraHour;
   const extraHrTotCst = salonExtraCst + totalStaff * state.extraHours * C.staffExtraHr;
 
-  const recsExtra  = Math.max(0, recsNeeded - C.recIncluded);
+  const recsExtra  = Math.max(0, actualRecs - C.recIncluded);
   const recsCst    = recsExtra  * C.staffCost;
   // El primer mozo siempre está incluido; los adicionales se cobran
   const waitersCst = Math.max(0, waiters - 1) * C.staffCost;
-  const xStaffCst  = state.extraStaff * C.staffCost;
+  const xStaffCst  = (state.extraStaff || 0) * C.staffCost;
 
   const total = basePrice + extraHrTotCst + kidsExtraCst + kidsUpgrade + adultMenuCst + recsCst + waitersCst + xStaffCst;
   let baseTotal  = Math.round(total / 100) * 100;
@@ -439,7 +453,7 @@ function calculate() {
     C, basePrice, km, am, kidsMenuPrc, adultMenuPrc, smallThr, freeThr,
     kidsExtraCst, kidsUpgrade, adultMenuCst,
     recsCst, waitersCst, xStaffCst, extraHrTotCst, salonExtraCst,
-    kidsIncl, kidsExtra, recsNeeded, recsExtra, waiters, actualRecs
+    kidsIncl, kidsExtra, recsExtra, waiters, actualRecs
   };
   return state.total;
 }
@@ -449,7 +463,7 @@ function calculate() {
 // ═══════════════════════════════════════════════════════════════
 function buildSummary() {
   const menuK    = KIDS_MENU_NAMES[state.kidsMenu   || 'basic'];
-  const menuA    = ADULT_MENU_NAMES[state.adultsMenu || 'none'];
+  const menuA    = ADULT_MENU_NAMES[state.adultsMenu || 'pizza'];
   const totalHrs = 4 + state.extraHours;
   const dayLabel = isWeekend(state.date) ? 'fin de semana 🎉' : 'día de semana';
 
@@ -477,16 +491,18 @@ function buildSummary() {
   // Staff
   if (b) {
     if (b.actualRecs > 0) {
-      t += `🎪 ${b.actualRecs} animador${b.actualRecs > 1 ? 'es' : ''}`;
+      t += `🎪 ${b.actualRecs} recreador${b.actualRecs > 1 ? 'es' : ''}`;
       t += b.recsCst > 0 ? ` — ${fmtCur(b.recsCst)} (${b.recsExtra} extra)\n` : ' (incluidos)\n';
     }
     if (b.waiters > 0) t += `🧑‍🍳 ${b.waiters} mozo${b.waiters > 1 ? 's' : ''}` + (b.waitersCst > 0 ? `: ${fmtCur(b.waitersCst)}\n` : ' (incluido)\n');
+    if (state.extraStaff > 0 && b.xStaffCst > 0) t += `➕ ${state.extraStaff} personal extra: ${fmtCur(b.xStaffCst)}\n`;
   }
-  if (state.extraStaff > 0 && b) t += `👤 ${state.extraStaff} personal adicional: ${fmtCur(b.xStaffCst)}\n`;
 
   // Horas extra
   if (b && b.extraHrTotCst > 0) t += `⏱ Horas extra: ${fmtCur(b.extraHrTotCst)}\n`;
 
+  if (state.edad)    t += `\n🎂 Edad: ${state.edad} años\n`;
+  if (state.roman)   t += `🎭 Roman: ${state.roman}\n`;
   if (state.comments) t += `\n💬 ${state.comments}\n`;
   if (state.notes)    t += `📝 ${state.notes}\n`;
 
@@ -551,7 +567,7 @@ function buildWhatsApp() {
   const b        = state._calc;
   const totalHrs = 4 + state.extraHours;
   const menuK    = KIDS_MENU_NAMES[state.kidsMenu   || 'basic'];
-  const menuA    = ADULT_MENU_NAMES[state.adultsMenu || 'none'];
+  const menuA    = ADULT_MENU_NAMES[state.adultsMenu || 'pizza'];
   const disc     = state.discount || { type: 'none', value: 0 };
   const hasDisc  = disc.type !== 'none' && disc.value > 0;
 
@@ -576,9 +592,9 @@ function buildWhatsApp() {
 
   // ── Staff ────────────────────────────────────────────────────
   const staffPartes = [];
-  if (b.actualRecs   > 0) staffPartes.push(`🎪 ${b.actualRecs} animador${b.actualRecs > 1 ? 'es' : ''}`);
-  if (b.waiters      > 0) staffPartes.push(`🧑‍🍳 ${b.waiters} mozo${b.waiters > 1 ? 's' : ''}`);
-  if (state.extraStaff>0) staffPartes.push(`👤 ${state.extraStaff} personal adicional`);
+  if (b.actualRecs > 0) staffPartes.push(`🎪 ${b.actualRecs} recreador${b.actualRecs > 1 ? 'es' : ''}`);
+  if (b.waiters    > 0) staffPartes.push(`🧑‍🍳 ${b.waiters} mozo${b.waiters > 1 ? 's' : ''}`);
+  if (state.extraStaff > 0) staffPartes.push(`➕ ${state.extraStaff} extra`);
   if (staffPartes.length) t += staffPartes.join(' · ') + '\n';
 
   // ── Incluido fijo ────────────────────────────────────────────
@@ -601,29 +617,37 @@ function saveToSheet() {
   const dayType = isWeekend(state.date) ? 'weekend' : 'weekday';
   const totalHrs = 4 + state.extraHours;
 
+  const fechaStr = `${String(state.date.getDate()).padStart(2,'0')}/${String(state.date.getMonth()+1).padStart(2,'0')}/${state.date.getFullYear()}`;
+  const calcTotal = state._calc ? Math.round((state._calc.basePrice + state._calc.extraHrTotCst + state._calc.kidsExtraCst + state._calc.kidsUpgrade + state._calc.adultMenuCst + state._calc.recsCst + state._calc.waitersCst + state._calc.xStaffCst) / 100) * 100 : state.total;
   const payload = {
+    sheetName:         'Presupuestos',
     'ID':              id,
-    'Tipo':            'presupuesto',
-    'Nombre guardado': state.clientName || '',
-    'Fecha':           `${String(state.date.getDate()).padStart(2,'0')}/${String(state.date.getMonth()+1).padStart(2,'0')}/${state.date.getFullYear()}`,
-    'Nombre evento':   state.clientName || '',
+    'Fecha':           fechaStr,
     'Hora inicio':     '',
     'Hora fin':        '',
     'Duración (hs)':   totalHrs,
-    'Tipo de día':     dayType === 'weekday' ? 'Lunes–Jueves' : 'Vie/Sáb/Dom/Fer',
+    'Nombre evento':   state.clientName || '',
+    'Edad':            state.edad || '',
     'Nº niños':        state.kids,
     'Menú niños':      KIDS_MENU_SHEET[state.kidsMenu || 'basic'],
     'Nº adultos':      state.adults,
     'Menú adultos':    ADULT_MENU_SHEET[state.adultsMenu || 'pizza'],
-    'Horas extra':     state.extraHours,
-    'Personal extra':  state.extraStaff,
+    'Roman':           state.roman || '',
     'Nº animadores':   state._calc?.actualRecs  ?? '',
     'Nº mozos':        state._calc?.waiters     ?? '',
+    'Anim. calculados':state._calc?.actualRecs  ?? '',
+    'Precio calculado':calcTotal,
     'Total ($)':       state.total,
-    'Descuento valor': (state.discount?.value || ''),
-    'Descuento tipo':  (state.discount?.type === 'pct' ? '%' : state.discount?.type === 'fixed' ? '$' : ''),
+    'P Total ($)':     '',
+    'Seña ($)':        state.sena || '',
     'Descripción':     state.comments || '',
     'Notas':           state.notes || 'Creado desde chatbot',
+    'Tipo de día':     dayType === 'weekday' ? 'Lunes–Jueves' : 'Vie/Sáb/Dom/Fer',
+    'Horas extra':     state.extraHours,
+    'Extras detalle':  '',
+    'Extras valor ($)':'',
+    'Descuento valor': (state.discount?.value || ''),
+    'Descuento tipo':  (state.discount?.type === 'pct' ? '%' : state.discount?.type === 'fixed' ? '$' : ''),
     'Guardado el':     new Date().toISOString()
   };
 
@@ -669,29 +693,36 @@ function saveReserva() {
   const fechaStr = `${String(state.date.getDate()).padStart(2,'0')}/${String(state.date.getMonth()+1).padStart(2,'0')}/${state.date.getFullYear()}`;
   const dayType  = isWeekend(state.date) ? 'weekend' : 'weekday';
 
+  const calcTotal2 = state._calc ? Math.round((state._calc.basePrice + state._calc.extraHrTotCst + state._calc.kidsExtraCst + state._calc.kidsUpgrade + state._calc.adultMenuCst + state._calc.recsCst + state._calc.waitersCst + state._calc.xStaffCst) / 100) * 100 : state.total;
   const payload = {
+    sheetName:         'Reservas',
     'ID':              id,
-    'Tipo':            'reserva',
-    'Nombre guardado': state.eventName || '',
     'Fecha':           fechaStr,
-    'Nombre evento':   state.eventName || '',
     'Hora inicio':     state.startTime,
     'Hora fin':        endTime,
     'Duración (hs)':   totalHrs,
-    'Tipo de día':     dayType === 'weekday' ? 'Lunes–Jueves' : 'Vie/Sáb/Dom/Fer',
+    'Nombre evento':   state.eventName || '',
+    'Edad':            state.edad || '',
     'Nº niños':        state.kids,
     'Menú niños':      KIDS_MENU_SHEET[state.kidsMenu || 'basic'],
     'Nº adultos':      state.adults,
-    'Menú adultos':    ADULT_MENU_SHEET[state.adultsMenu || 'none'],
-    'Horas extra':     state.extraHours,
-    'Personal extra':  state.extraStaff,
+    'Menú adultos':    ADULT_MENU_SHEET[state.adultsMenu || 'pizza'],
+    'Roman':           state.roman || '',
     'Nº animadores':   state._calc?.actualRecs  ?? '',
     'Nº mozos':        state._calc?.waiters     ?? '',
+    'Anim. calculados':state._calc?.actualRecs  ?? '',
+    'Precio calculado':calcTotal2,
     'Total ($)':       state.total,
-    'Descuento valor': (state.discount?.value || ''),
-    'Descuento tipo':  (state.discount?.type === 'pct' ? '%' : state.discount?.type === 'fixed' ? '$' : ''),
+    'P Total ($)':     '',
+    'Seña ($)':        state.sena || '',
     'Descripción':     state.comments || '',
     'Notas':           state.notes || 'Creado desde chatbot',
+    'Tipo de día':     dayType === 'weekday' ? 'Lunes–Jueves' : 'Vie/Sáb/Dom/Fer',
+    'Horas extra':     state.extraHours,
+    'Extras detalle':  '',
+    'Extras valor ($)':'',
+    'Descuento valor': (state.discount?.value || ''),
+    'Descuento tipo':  (state.discount?.type === 'pct' ? '%' : state.discount?.type === 'fixed' ? '$' : ''),
     'Guardado el':     new Date().toISOString()
   };
 
@@ -723,10 +754,13 @@ function saveReserva() {
       form: {
         eventDate: dateISO(state.date), dayType,
         numKids: String(state.kids), numAdults: String(state.adults),
-        kidsMenu: state.kidsMenu || 'basic', adultsMenu: state.adultsMenu || 'none',
-        extraHours: String(state.extraHours), extraStaff: String(state.extraStaff),
+        kidsMenu: state.kidsMenu || 'basic', adultsMenu: state.adultsMenu || 'pizza',
+        extraHours: String(state.extraHours),
         discValue: '0', discountType: 'none',
         eventName: state.eventName || '',
+        eventAge: state.edad ? String(state.edad) : '',
+        romanRole: state.roman || '',
+        eventSena: state.sena ? String(state.sena) : '',
         startTime: state.startTime, eventDesc: state.comments || '', eventOthers: ''
       }
     });
@@ -740,14 +774,18 @@ function buildReservaSummary() {
   const totalHrs = 4 + state.extraHours;
   const endTime  = calcEndTime(state.startTime, totalHrs);
   const menuK    = KIDS_MENU_NAMES[state.kidsMenu   || 'basic'];
-  const menuA    = ADULT_MENU_NAMES[state.adultsMenu || 'none'];
+  const menuA    = ADULT_MENU_NAMES[state.adultsMenu || 'pizza'];
 
   let t = `📋 *Resumen de la reserva*\n\n`;
   const br = state._calc;
 
   t += `🎉 ${state.eventName}\n`;
   t += `📅 ${fmtDate(state.date)}\n`;
-  t += `🕐 ${state.startTime} → ${endTime} (${totalHrs} hs)\n\n`;
+  t += `🕐 ${state.startTime} → ${endTime} (${totalHrs} hs)\n`;
+  if (state.edad)  t += `🎂 Edad: ${state.edad}\n`;
+  if (state.roman) t += `🎭 Roman: ${state.roman}\n`;
+  if (state.sena)  t += `💵 Seña: ${fmtCur(state.sena)}\n`;
+  t += `\n`;
 
   // ── Desglose ──────────────────────────────────────────────
   if (br) t += `🏠 Base: ${fmtCur(br.basePrice)}\n`;
@@ -763,13 +801,13 @@ function buildReservaSummary() {
 
   if (br) {
     if (br.actualRecs > 0) {
-      t += `🎪 ${br.actualRecs} animador${br.actualRecs > 1 ? 'es' : ''}`;
+      t += `🎪 ${br.actualRecs} recreador${br.actualRecs > 1 ? 'es' : ''}`;
       t += br.recsCst > 0 ? ` — ${fmtCur(br.recsCst)} (${br.recsExtra} extra)\n` : ' (incluidos)\n';
     }
     if (br.waiters > 0) t += `🧑‍🍳 ${br.waiters} mozo${br.waiters > 1 ? 's' : ''}` + (br.waitersCst > 0 ? `: ${fmtCur(br.waitersCst)}\n` : ' (incluido)\n');
+    if (state.extraStaff > 0 && br.xStaffCst > 0) t += `➕ ${state.extraStaff} personal extra: ${fmtCur(br.xStaffCst)}\n`;
+    if (br.extraHrTotCst > 0) t += `⏱ Horas extra: ${fmtCur(br.extraHrTotCst)}\n`;
   }
-  if (state.extraStaff > 0 && br) t += `👤 ${state.extraStaff} personal adicional: ${fmtCur(br.xStaffCst)}\n`;
-  if (br && br.extraHrTotCst > 0) t += `⏱ Horas extra: ${fmtCur(br.extraHrTotCst)}\n`;
 
   if (state.comments) t += `\n💬 ${state.comments}\n`;
   if (state.notes)    t += `📝 ${state.notes}\n`;
@@ -878,7 +916,7 @@ async function fetchAndShowPresupuestos(filterFn, noResultsMsg) {
     }
     state._presCache = rows;
     const opts = rows.slice(0, 8).map(p => ({
-      label: `📅 ${p.Fecha} — ${p['Nombre guardado'] || 'Sin nombre'} (${p['Nº niños']}N/${p['Nº adultos']}A)`,
+      label: `📅 ${p.Fecha} — ${p['Nombre evento'] || 'Sin nombre'} (${p['Nº niños']}N/${p['Nº adultos']}A)`,
       val:   '__pres__' + p.ID
     }));
     opts.push({ label: '❌ Cancelar', val: '__cancel_reserva__' });
@@ -897,6 +935,8 @@ function startReservaFromScratch() {
   state.comments = ''; state.notes = '';
   state.extrasAsked = false;
   state.priceOverride = null; state.discount = { type: 'none', value: 0 };
+  state.edad = null; state.sena = null; state.roman = null;
+  state.extraStaff = 0;
   state.eventName = null; state.startTime = null;
   state._selectedPresId = null; state._reservaFromScratch = true;
   state._dateWarningShown = false;
@@ -914,11 +954,14 @@ function selectPresupuesto(id) {
   state.kids      = parseInt(pres['Nº niños'])    || 0;
   state.adults    = parseInt(pres['Nº adultos'])   || 0;
   state.extraHours= parseInt(pres['Horas extra'])  || 0;
-  state.extraStaff= parseInt(pres['Personal extra'])|| 0;
+  state.extraStaff = 0;
   state.comments  = pres['Descripción'] || '';
-  state.clientName= pres['Nombre guardado'] || '';
+  state.clientName= pres['Nombre evento'] || '';
   state.total     = parseInt(pres['Total ($)'])     || 0;
-  const km = { 'Básico':'basic','Alternativo':'alt' };
+  state.edad      = pres['Edad']  ? parseInt(pres['Edad'])  : '';
+  state.roman     = pres['Roman'] || '';
+  state.sena      = pres['Seña ($)'] ? parseInt(pres['Seña ($)']) : 0;
+  const km = { 'Panchos y snacks':'basic','Nuggets con papas fritas':'alt','Básico':'basic','Alternativo':'alt' };
   const am = { 'Traen su comida':'none','Solo pizzas':'pizza','Pizzas y calzones':'pizza_calzone','Pizzas, calzones y chivitos':'pizza_calzone_chivito' };
   state.kidsMenu   = km[pres['Menú niños']]  || 'basic';
   state.adultsMenu = am[pres['Menú adultos']]|| 'none';
@@ -940,6 +983,25 @@ async function handleReservaCollecting() {
   if (!state.startTime) {
     botMsg('¿A qué hora empieza? (Ej: 18:00, 6 de la tarde)');
     state._waitingFor = 'startTime';
+    return;
+  }
+  if (state.edad === null) {
+    botMsg('¿Qué edad cumple el festejado/a?', [{ label: '⏭️ Omitir', val: '__skip_edad__' }]);
+    state._waitingFor = 'edad_rsv';
+    return;
+  }
+  if (state.roman === null) {
+    botMsg('¿Roman en este evento?', [
+      { label: '🎭 Recreador', val: '__roman_Recreador__' },
+      { label: '🏛️ Salón',     val: '__roman_Salon__'    },
+      { label: '❌ No va',      val: '__roman_No va__'    },
+    ]);
+    state._waitingFor = 'roman_rsv';
+    return;
+  }
+  if (state.sena === null) {
+    botMsg('¿Cuánto es la seña?', [{ label: '⏭️ Sin seña', val: '__skip_sena__' }]);
+    state._waitingFor = 'sena_rsv';
     return;
   }
 
@@ -1028,11 +1090,10 @@ async function handleMissing() {
       botMsg(
         '¿Necesitás agregar algo más?',
         [
-          { label: '✅ No, está bien',     val: '__no_extras__'   },
-          { label: '⏱ Horas extra',        val: '__want_hours__'  },
-          { label: '👤 Personal adicional', val: '__want_staff__'  },
-          { label: '💬 Descripción',        val: '__want_comment__'},
-          { label: '📝 Nota interna',       val: '__want_notes__'  },
+          { label: '✅ No, está bien',   val: '__no_extras__'   },
+          { label: '⏱ Horas extra',      val: '__want_hours__'  },
+          { label: '💬 Descripción',      val: '__want_comment__'},
+          { label: '📝 Nota interna',     val: '__want_notes__'  },
         ]
       );
       break;
@@ -1128,6 +1189,25 @@ function processMessage(raw) {
     return;
   }
 
+  // ── Edad/Roman/Seña en reserva_collecting ────────────────
+  if (raw === '__skip_edad__') {
+    state.edad = ''; state._waitingFor = null; handleReservaCollecting(); return;
+  }
+  if (state._waitingFor === 'edad_rsv') {
+    const m = raw.replace(/\s/g,'').match(/\d+/);
+    state.edad = m ? +m[0] : ''; state._waitingFor = null; handleReservaCollecting(); return;
+  }
+  if (raw.startsWith('__roman_')) {
+    state.roman = raw.replace('__roman_', ''); state._waitingFor = null; handleReservaCollecting(); return;
+  }
+  if (raw === '__skip_sena__') {
+    state.sena = 0; state._waitingFor = null; handleReservaCollecting(); return;
+  }
+  if (state._waitingFor === 'sena_rsv') {
+    const m = raw.replace(/[\s.$]/g,'').match(/\d+/);
+    state.sena = m ? +m[0] : 0; state._waitingFor = null; handleReservaCollecting(); return;
+  }
+
   // ── Esperando eventName o startTime ──────────────────────
   if (state._waitingFor === 'eventName') {
     state.eventName = raw.trim();
@@ -1165,17 +1245,20 @@ function processMessage(raw) {
     if (raw === '__edit_reserva__' || /cambi|modific/.test(t)) {
       state.step = 'reserva_editing_menu';
       botMsg('¿Qué querés cambiar?', [
-        { label: '🎉 Nombre evento',       val: '__re_eventname__'  },
-        { label: '🕐 Hora inicio',          val: '__re_starttime__'  },
-        { label: '📅 Fecha',               val: '__re_date__'       },
-        { label: '👶 Niños',               val: '__re_kids__'       },
-        { label: '🧑 Adultos',             val: '__re_adults__'     },
-        { label: '🍽️ Menú',               val: '__re_menu__'       },
-        { label: '⏱ Horas extra',          val: '__re_hours__'      },
-        { label: '💰 Precio final',         val: '__re_price__'      },
-        { label: '🏷️ Descuento',            val: '__re_discount__'   },
-        { label: '💬 Descripción',          val: '__re_desc__'       },
-        { label: '📝 Nota',               val: '__re_notes__'      },
+        { label: '🎉 Nombre evento',        val: '__re_eventname__'  },
+        { label: '🕐 Hora inicio',           val: '__re_starttime__'  },
+        { label: '📅 Fecha',                val: '__re_date__'       },
+        { label: '🎂 Edad',                 val: '__re_edad__'       },
+        { label: '🎭 Roman',                val: '__re_roman__'      },
+        { label: '💵 Seña',                 val: '__re_sena__'       },
+        { label: '👶 Niños',                val: '__re_kids__'       },
+        { label: '🧑 Adultos',              val: '__re_adults__'     },
+        { label: '🍽️ Menú',                val: '__re_menu__'       },
+        { label: '⏱ Horas extra',           val: '__re_hours__'      },
+        { label: '💰 Precio final',          val: '__re_price__'      },
+        { label: '🏷️ Descuento',             val: '__re_discount__'   },
+        { label: '💬 Descripción',           val: '__re_desc__'       },
+        { label: '📝 Nota',                 val: '__re_notes__'      },
       ]);
       return;
     }
@@ -1185,23 +1268,33 @@ function processMessage(raw) {
   // ── Estado: reserva_editing_menu (maneja cada campo) ─────
   if (state.step === 'reserva_editing_menu' && !state._waitingFor) {
     const editMap = {
-      '__re_eventname__': ['eventName',       'Ingresá el nuevo nombre del evento:'],
+      '__re_eventname__': ['eventName',      'Ingresá el nuevo nombre del evento:'],
       '__re_starttime__': ['edit_starttime', '¿Nueva hora de inicio? (Ej: 18:00)'],
-      '__re_date__':      ['edit_date',  '¿Nueva fecha? (Ej: 15/06, el sábado)'],
-      '__re_kids__':      ['edit_kids',  '¿Cuántos niños?'],
-      '__re_adults__':    ['edit_adults','¿Cuántos adultos?'],
-      '__re_menu__':      ['edit_menu',  null],
-      '__re_hours__':     ['edit_hours', '¿Cuántas horas extra?'],
-      '__re_price__':     ['edit_price', '¿Cuál es el precio final? (número sin puntos)'],
-      '__re_discount__':  ['edit_discount', '¿Tipo de descuento? Escribí "15%" o "$2000"'],
-      '__re_desc__':      ['edit_desc',  '¿Cuál es la descripción?'],
-      '__re_notes__':     ['edit_notes', '¿Cuál es la nota interna?'],
+      '__re_date__':      ['edit_date',      '¿Nueva fecha? (Ej: 15/06, el sábado)'],
+      '__re_edad__':      ['edit_edad',      '¿Qué edad cumple?'],
+      '__re_sena__':      ['edit_sena',      '¿Cuánto es la seña? ($0 si no hay)'],
+      '__re_roman__':     ['edit_roman',     null],
+      '__re_kids__':      ['edit_kids',      '¿Cuántos niños?'],
+      '__re_adults__':    ['edit_adults',    '¿Cuántos adultos?'],
+      '__re_menu__':      ['edit_menu',      null],
+      '__re_hours__':     ['edit_hours',     '¿Cuántas horas extra?'],
+      '__re_price__':     ['edit_price',     '¿Cuál es el precio final? (número sin puntos)'],
+      '__re_discount__':  ['edit_discount',  '¿Tipo de descuento? Escribí "15%" o "$2000"'],
+      '__re_desc__':      ['edit_desc',      '¿Cuál es la descripción?'],
+      '__re_notes__':     ['edit_notes',     '¿Cuál es la nota interna?'],
     };
     if (editMap[raw]) {
       const [wf, prompt] = editMap[raw];
       if (wf === 'edit_menu') {
         state._waitingFor = 'edit_menu_reserva';
         botMsg('¿Con qué menú?', menuQuickReplies());
+      } else if (wf === 'edit_roman') {
+        state._waitingFor = 'edit_roman';
+        botMsg('¿Roman en este evento?', [
+          { label: '🎭 Recreador', val: '__roman_Recreador__' },
+          { label: '🏛️ Salón',     val: '__roman_Salon__'    },
+          { label: '❌ No va',      val: '__roman_No va__'    },
+        ]);
       } else {
         state._waitingFor = wf;
         botMsg(prompt);
@@ -1303,6 +1396,21 @@ function processMessage(raw) {
   }
   if (state._waitingFor === 'edit_notes') {
     state.notes = raw; state._waitingFor = null; backToConfirm(isRsv); return;
+  }
+  if (state._waitingFor === 'edit_edad') {
+    const m = raw.replace(/\s/g,'').match(/\d+/);
+    state.edad = m ? +m[0] : ''; state._waitingFor = null; backToConfirm(isRsv); return;
+  }
+  if (state._waitingFor === 'edit_sena') {
+    const m = raw.replace(/[\s.$]/g,'').match(/\d+/);
+    state.sena = m ? +m[0] : 0; state._waitingFor = null; backToConfirm(isRsv); return;
+  }
+  if (state._waitingFor === 'edit_roman') {
+    // Roman se maneja por __roman_X__ quick replies, pero por si escribe texto libre:
+    if (/recreador/i.test(raw)) state.roman = 'Recreador';
+    else if (/salon|salón/i.test(raw)) state.roman = 'Salon';
+    else state.roman = 'No va';
+    state._waitingFor = null; backToConfirm(isRsv); return;
   }
   if (state._waitingFor === 'edit_starttime') {
     const p = parseTime(raw);
