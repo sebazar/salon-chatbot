@@ -238,6 +238,8 @@ function resetState() {
     edad: null,           // edad del cumpleañero/a (null = no preguntado aún)
     sena: null,           // seña en $ (null = no preguntado aún)
     roman: null,          // 'Recreador' | 'Salon' | 'No va' (null = no preguntado)
+    senaFormaPago: null,  // 'Banco Seba' | 'Banco Vir' | 'Efectivo Fede' (null = no preguntado)
+    senaConcepto: 'Seña', // concepto de la entrada
     // Reserva
     eventName: null, startTime: null,
     _selectedPresId: null, _presCache: [],
@@ -733,6 +735,28 @@ function saveReserva() {
     body:    JSON.stringify(payload)
   }).catch(() => {});
 
+  // Registrar seña en Entradas (si hay)
+  if (state.sena > 0) {
+    const hoy     = new Date();
+    const hoyStr  = `${String(hoy.getDate()).padStart(2,'0')}/${String(hoy.getMonth()+1).padStart(2,'0')}/${hoy.getFullYear()}`;
+    fetch(url, {
+      method:  'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action:    'insert',
+        sheetName: 'Entradas',
+        row: {
+          'Fecha':       hoyStr,
+          'Importe':     state.sena,
+          'N. Evento':   id,
+          'Concepto':    state.senaConcepto || 'Seña',
+          'Forma Pago':  state.senaFormaPago || '',
+          'Comentarios': '',
+        }
+      })
+    }).catch(() => {});
+  }
+
   // Marcar el presupuesto original como convertido (sacarlo de la tab presupuestos)
   if (state._selectedPresId) {
     fetch(url, {
@@ -761,6 +785,8 @@ function saveReserva() {
         eventAge: state.edad ? String(state.edad) : '',
         romanRole: state.roman || '',
         eventSena: state.sena ? String(state.sena) : '',
+        senaFormaPago: state.senaFormaPago || '',
+        senaConcepto:  state.senaConcepto  || 'Seña',
         startTime: state.startTime, eventDesc: state.comments || '', eventOthers: ''
       }
     });
@@ -784,7 +810,11 @@ function buildReservaSummary() {
   t += `🕐 ${state.startTime} → ${endTime} (${totalHrs} hs)\n`;
   if (state.edad)  t += `🎂 Edad: ${state.edad}\n`;
   if (state.roman) t += `🎭 Roman: ${state.roman}\n`;
-  if (state.sena)  t += `💵 Seña: ${fmtCur(state.sena)}\n`;
+  if (state.sena)  {
+    t += `💵 Seña: ${fmtCur(state.sena)}`;
+    if (state.senaFormaPago) t += ` · ${state.senaFormaPago}`;
+    t += '\n';
+  }
   t += `\n`;
 
   // ── Desglose ──────────────────────────────────────────────
@@ -936,6 +966,7 @@ function startReservaFromScratch() {
   state.extrasAsked = false;
   state.priceOverride = null; state.discount = { type: 'none', value: 0 };
   state.edad = null; state.sena = null; state.roman = null;
+  state.senaFormaPago = null; state.senaConcepto = 'Seña';
   state.extraStaff = 0;
   state.eventName = null; state.startTime = null;
   state._selectedPresId = null; state._reservaFromScratch = true;
@@ -1002,6 +1033,16 @@ async function handleReservaCollecting() {
   if (state.sena === null) {
     botMsg('¿Cuánto es la seña?', [{ label: '⏭️ Sin seña', val: '__skip_sena__' }]);
     state._waitingFor = 'sena_rsv';
+    return;
+  }
+  // Forma de pago: solo si hay seña y no se preguntó aún
+  if (state.sena > 0 && state.senaFormaPago === null) {
+    botMsg('¿Forma de pago de la seña?', [
+      { label: '🏦 Banco Seba',    val: '__fp_Banco Seba__'    },
+      { label: '🏦 Banco Vir',     val: '__fp_Banco Vir__'     },
+      { label: '💵 Efectivo Fede', val: '__fp_Efectivo Fede__' },
+    ]);
+    state._waitingFor = 'senaFormaPago_rsv';
     return;
   }
 
@@ -1201,11 +1242,19 @@ function processMessage(raw) {
     state.roman = raw.replace('__roman_', ''); state._waitingFor = null; handleReservaCollecting(); return;
   }
   if (raw === '__skip_sena__') {
-    state.sena = 0; state._waitingFor = null; handleReservaCollecting(); return;
+    state.sena = 0; state.senaFormaPago = ''; state._waitingFor = null; handleReservaCollecting(); return;
   }
   if (state._waitingFor === 'sena_rsv') {
     const m = raw.replace(/[\s.$]/g,'').match(/\d+/);
     state.sena = m ? +m[0] : 0; state._waitingFor = null; handleReservaCollecting(); return;
+  }
+  // Forma de pago de la seña (quick reply __fp_XXXX__ o texto libre)
+  if (raw.startsWith('__fp_')) {
+    state.senaFormaPago = raw.replace(/^__fp_/, '').replace(/__$/, '');
+    state._waitingFor = null; handleReservaCollecting(); return;
+  }
+  if (state._waitingFor === 'senaFormaPago_rsv' || state._waitingFor === 'edit_fp') {
+    state.senaFormaPago = raw.trim(); state._waitingFor = null; handleReservaCollecting(); return;
   }
 
   // ── Esperando eventName o startTime ──────────────────────
@@ -1251,6 +1300,7 @@ function processMessage(raw) {
         { label: '🎂 Edad',                 val: '__re_edad__'       },
         { label: '🎭 Roman',                val: '__re_roman__'      },
         { label: '💵 Seña',                 val: '__re_sena__'       },
+        { label: '💳 Forma de pago',        val: '__re_fp__'         },
         { label: '👶 Niños',                val: '__re_kids__'       },
         { label: '🧑 Adultos',              val: '__re_adults__'     },
         { label: '🍽️ Menú',                val: '__re_menu__'       },
@@ -1273,6 +1323,7 @@ function processMessage(raw) {
       '__re_date__':      ['edit_date',      '¿Nueva fecha? (Ej: 15/06, el sábado)'],
       '__re_edad__':      ['edit_edad',      '¿Qué edad cumple?'],
       '__re_sena__':      ['edit_sena',      '¿Cuánto es la seña? ($0 si no hay)'],
+      '__re_fp__':        ['edit_fp',        null],
       '__re_roman__':     ['edit_roman',     null],
       '__re_kids__':      ['edit_kids',      '¿Cuántos niños?'],
       '__re_adults__':    ['edit_adults',    '¿Cuántos adultos?'],
@@ -1294,6 +1345,13 @@ function processMessage(raw) {
           { label: '🎭 Recreador', val: '__roman_Recreador__' },
           { label: '🏛️ Salón',     val: '__roman_Salon__'    },
           { label: '❌ No va',      val: '__roman_No va__'    },
+        ]);
+      } else if (wf === 'edit_fp') {
+        state._waitingFor = 'edit_fp';
+        botMsg('¿Forma de pago de la seña?', [
+          { label: '🏦 Banco Seba',    val: '__fp_Banco Seba__'    },
+          { label: '🏦 Banco Vir',     val: '__fp_Banco Vir__'     },
+          { label: '💵 Efectivo Fede', val: '__fp_Efectivo Fede__' },
         ]);
       } else {
         state._waitingFor = wf;
