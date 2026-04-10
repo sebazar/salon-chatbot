@@ -1067,8 +1067,9 @@ async function handleReservaCollecting() {
   // ── Sin conflicto: mostrar resumen ───────────────────────────
   state.step = 'reserva_confirm';
   botMsg(buildReservaSummary(), [
-    { label: '💾 Guardar reserva', val: '__save_reserva__' },
-    { label: '✏️ Modificar',       val: '__edit_reserva__' },
+    { label: '💾 Guardar reserva',   val: '__save_reserva__'   },
+    { label: '📋 Ver en formulario', val: '__open_form_rsv__'  },
+    { label: '✏️ Modificar',         val: '__edit_reserva__'   },
   ]);
 }
 
@@ -1089,8 +1090,9 @@ function getNextMissing() {
 function showSummaryWithButtons() {
   calculate();
   botMsg(buildSummary(), [
-    { label: '💾 Guardar', val: '__save__' },
-    { label: '✏️ Modificar', val: '__edit__' },
+    { label: '💾 Guardar',            val: '__save__'              },
+    { label: '📋 Ver en formulario',  val: '__open_form_pres__'    },
+    { label: '✏️ Modificar',          val: '__edit__'              },
   ]);
   state.step = 'confirm';
 }
@@ -1152,8 +1154,63 @@ async function handleMissing() {
   }
 }
 
+// ════════════════════════════════════════════
+//  PREFILL FORM — envía datos al formulario padre
+// ════════════════════════════════════════════
+function buildFormPayload(isReserva) {
+  const C      = cfg();
+  const dt     = state.date ? state.date.toISOString().split('T')[0] : '';
+  const dow    = state.date ? state.date.getDay() : 0;
+  const dayTyp = (dow === 0 || dow === 5 || dow === 6) ? 'weekend' : 'weekday';
+  const disc   = state.discount || { type: 'none', value: 0 };
+  return {
+    eventDate:      dt,
+    dayType:        dayTyp,
+    eventName:      isReserva ? (state.eventName || '') : (state.clientName || ''),
+    eventDesc:      state.comments   || '',
+    eventOthers:    state.notes      || '',
+    startTime:      isReserva ? (state.startTime || '') : '',
+    numKids:        String(state.kids    ?? 0),
+    numAdults:      String(state.adults  ?? 0),
+    extraHours:     String(state.extraHours || 0),
+    kidsMenu:       state.kidsMenu   || 'basic',
+    adultsMenu:     state.adultsMenu || 'pizza',
+    eventAge:       state.edad       ? String(state.edad)  : '',
+    eventSena:      state.sena       ? String(state.sena)  : '',
+    senaConcepto:   state.senaConcepto  || 'Seña',
+    senaFormaPago:  state.senaFormaPago || '',
+    senaComentarios:'',
+    romanRole:      state.roman      || '',
+    discountType:   disc.type        || 'none',
+    discValue:      String(disc.value || 0),
+    precioFinalOverride: state.priceOverride ? String(state.priceOverride) : '',
+    otroDesc:       '',
+    otroValor:      '',
+    _fromChatbot:   true,
+    _isReserva:     isReserva,
+  };
+}
+
+function openFormPrefilled(isReserva) {
+  if (window.parent && window.parent !== window) {
+    addMsg('bot', '📋 Abriendo el formulario con los datos...');
+    setTimeout(() => {
+      window.parent.postMessage({
+        action: 'fillForm',
+        form:   buildFormPayload(isReserva),
+      }, '*');
+    }, 400);
+  } else {
+    addMsg('bot', '⚠️ No se puede abrir el formulario desde esta ventana.');
+  }
+}
+
 function processMessage(raw) {
   if (raw === '__reset__') { resetChat(); return; }
+
+  // ── Ver en formulario (presupuesto o reserva) ─────────────
+  if (raw === '__open_form_pres__') { openFormPrefilled(false); return; }
+  if (raw === '__open_form_rsv__')  { openFormPrefilled(true);  return; }
 
   // ── Comando "form" → abre el formulario en la app padre ──
   if (/^\s*form\s*$/i.test(raw)) {
